@@ -38,28 +38,34 @@ export async function decodeAudioData(
 }
 
 /**
- * Splits text into semantic chunks (~220 chars) for natural prosody.
+ * Splits text into semantic chunks for natural prosody.
  */
-export function chunkText(text: string): string[] {
-  // Use punctuation as natural boundaries
-  const sentences = text.match(/[^.!?]+[.!?]+|\s*[^.!?]+$/g) || [text];
+export function chunkText(text: string, maxLength = 300): string[] {
+  const sentences = text.split(/(?<=[.?!])\s+/);
   const chunks: string[] = [];
-  let currentChunk = '';
-
-  for (const sentence of sentences) {
-    if ((currentChunk + sentence).length > 220 && currentChunk !== '') {
-      chunks.push(currentChunk.trim());
-      currentChunk = sentence;
+  let current = "";
+  for (const s of sentences) {
+    if ((current + " " + s).length > maxLength) {
+      if (current) chunks.push(current.trim());
+      current = s;
     } else {
-      currentChunk += ' ' + sentence;
+      current += (current ? " " : "") + s;
     }
   }
-
-  if (currentChunk.trim() !== '') {
-    chunks.push(currentChunk.trim());
-  }
-
+  if (current) chunks.push(current.trim());
   return chunks;
+}
+
+/**
+ * Injects prosody instructions into text chunks for the synthesis engine.
+ */
+export function injectProsody(chunk: string, profile: { tone: string, pacing: string }): string {
+  const toneMap: Record<string, string> = {
+    friendly: "warm",
+    formal: "professional",
+    authoritative: "dominant"
+  };
+  return `[Tone: ${toneMap[profile.tone] || 'neutral'}, Pacing: ${profile.pacing}] ${chunk}`;
 }
 
 export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

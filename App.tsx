@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { 
@@ -8,45 +9,38 @@ import {
   Message 
 } from './types';
 import { Icons, GEMINI_MODEL, VoicePresets } from './constants';
-import { chunkText, sleep } from './utils/audioUtils';
+import { chunkText, sleep, injectProsody } from './utils/audioUtils';
 import { audioEngine } from './services/audioEngine';
 
 /**
- * Premium Hint Component
- * Provides detailed, high-fidelity context for system calibration.
+ * Premium Technical Tooltip
+ * Provides deep architectural context for system calibration.
  */
-const SystemHint: React.FC<{ title: string; text: string }> = ({ title, text }) => {
-  const [isOpen, setIsOpen] = useState(false);
+const TechnicalTooltip: React.FC<{ title: string; text: string; children: React.ReactNode }> = ({ title, text, children }) => {
+  const [isVisible, setIsVisible] = useState(false);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+
   return (
-    <div className="inline-block ml-1.5 align-middle">
-      <button 
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setIsOpen(!isOpen);
-        }}
-        className={`w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-black transition-all duration-300 ${
-          isOpen 
-            ? 'bg-indigo-500 border-indigo-400 text-white shadow-[0_0_10px_rgba(99,102,241,0.5)]' 
-            : 'border-white/10 text-zinc-600 hover:text-zinc-400 hover:border-white/20'
-        }`}
-      >
-        ?
-      </button>
-      {isOpen && (
-        <div className="absolute left-8 right-8 mt-3 p-4 glass-premium pearlescent border border-white/20 rounded-2xl z-[120] animate-in fade-in slide-in-from-top-2 shadow-2xl backdrop-blur-3xl">
-          <div className="flex flex-col gap-1.5">
+    <div 
+      className="relative"
+      onMouseEnter={() => setIsVisible(true)}
+      onMouseLeave={() => setIsVisible(false)}
+      onFocus={() => setIsVisible(true)}
+      onBlur={() => setIsVisible(false)}
+    >
+      {children}
+      {isVisible && (
+        <div 
+          ref={tooltipRef}
+          className="absolute z-[200] bottom-full left-1/2 -translate-x-1/2 mb-3 w-64 p-4 glass-premium pearlescent border border-white/20 rounded-2xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 pointer-events-none"
+        >
+          <div className="flex flex-col gap-1">
             <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{title}</span>
             <p className="text-[11px] text-zinc-200 font-semibold leading-relaxed tracking-tight">
               {text}
             </p>
           </div>
-          <button 
-            onClick={() => setIsOpen(false)}
-            className="mt-3 text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] hover:text-white transition-colors"
-          >
-            Dismiss
-          </button>
+          <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-white/10"></div>
         </div>
       )}
     </div>
@@ -96,17 +90,14 @@ const App: React.FC = () => {
           (text, role) => {
             setMessages(prev => {
               const lastMsg = prev[prev.length - 1];
-              // OPTIMIZED: Append tokens directly. The API sends delta strings.
-              // Direct concatenation prevents artificial spaces inside words.
+              // FIXED: Append tokens directly to avoid word-splitting spaces
               if (lastMsg && lastMsg.role === role && Date.now() - lastMsg.timestamp < 3000) {
                 const updated = [...prev];
-                const rawCombined = lastMsg.content + text;
-                // Clean extra whitespace but preserve single word separation.
-                const cleanedContent = rawCombined.replace(/\s{2,}/g, ' '); 
-                
+                // Direct join to preserve word continuity (e.g., "ena" + "bled" = "enabled")
+                const newContent = lastMsg.content + text;
                 updated[updated.length - 1] = { 
                   ...lastMsg, 
-                  content: cleanedContent 
+                  content: newContent.replace(/\s{2,}/g, ' ') // Collapse accidental double spaces but keep words intact
                 };
                 return updated;
               }
@@ -116,7 +107,7 @@ const App: React.FC = () => {
           (engine) => setActiveEngine(engine)
         );
       } catch (err) {
-        console.error("Link failure:", err);
+        console.error("Session failed:", err);
         setIsHandsFree(false);
         setIsSpeaking(false);
       }
@@ -144,15 +135,15 @@ const App: React.FC = () => {
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-      const systemInstruction = `You are AtlasAI v2.1. Deliver elite concierge services. Respond with precision. User name: ${userName || 'client'}.`;
+      const systemInstruction = `You are AtlasAI v2.1. Deliver elite concierge services. Respond with precision. User: ${userName || 'Client'}.`;
       
       const response = await ai.models.generateContent({
         model: GEMINI_MODEL,
         contents: textToSend,
-        config: { systemInstruction, temperature: 0.65 }
+        config: { systemInstruction, temperature: 0.7 }
       });
 
-      const aiText = response.text || "Communication node stalled.";
+      const aiText = response.text || "Neural connection interrupted.";
       const assistantMsg: Message = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -163,7 +154,7 @@ const App: React.FC = () => {
       setIsThinking(false);
       await startVoicePipeline(aiText);
     } catch (error) {
-      console.error("AI failure:", error);
+      console.error("AI node error:", error);
       setIsThinking(false);
     }
   };
@@ -184,7 +175,8 @@ const App: React.FC = () => {
     for (let i = 0; i < rawChunks.length; i++) {
       setAudioChunks(prev => prev.map((c, idx) => idx === i ? { ...c, status: 'playing' } : c));
       try {
-        await audioEngine.speak(rawChunks[i], (engine) => {
+        const textToSpeak = injectProsody(rawChunks[i], brandProfile);
+        await audioEngine.speak(textToSpeak, (engine) => {
           setActiveEngine(engine);
           setAudioChunks(prev => prev.map((c, idx) => idx === i ? { ...c, engine } : c));
         });
@@ -192,7 +184,7 @@ const App: React.FC = () => {
       } catch (err) {
         setAudioChunks(prev => prev.map((c, idx) => idx === i ? { ...c, status: 'error' } : c));
       }
-      await sleep(150); 
+      await sleep(100); 
     }
     setIsSpeaking(false);
   };
@@ -233,39 +225,43 @@ const App: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={toggleHandsFree} className={`p-1.5 rounded-lg btn-premium border ${isHandsFree ? 'bg-red-600 text-white border-red-400' : 'glass-dark text-zinc-400 border-white/10'}`}>
-            {isHandsFree ? <Icons.MicOff className="w-4 h-4" /> : <Icons.Mic className="w-4 h-4" />}
-          </button>
-          <button onClick={() => setShowSettings(true)} className="p-1.5 rounded-lg glass-dark btn-premium text-zinc-400 border border-white/10">
-            <Icons.Settings className="w-4 h-4" />
-          </button>
+          <TechnicalTooltip title="Bimodal Session" text="Toggles the real-time hands-free communication node. Utilizes the Gemini 2.5 Flash Native Audio model for ultra-low latency interaction.">
+            <button onClick={toggleHandsFree} className={`p-1.5 rounded-lg btn-premium border ${isHandsFree ? 'bg-red-600 text-white border-red-400 shadow-[0_0_20px_rgba(220,38,38,0.4)]' : 'glass-dark text-zinc-400 border-white/10'}`}>
+              {isHandsFree ? <Icons.MicOff className="w-4 h-4" /> : <Icons.Mic className="w-4 h-4" />}
+            </button>
+          </TechnicalTooltip>
+          <TechnicalTooltip title="System Core" text="Access the neural calibration parameters. Modify behavioral archetypes and vocal prosody matrices.">
+            <button onClick={() => setShowSettings(true)} className="p-1.5 rounded-lg glass-dark btn-premium text-zinc-400 border border-white/10">
+              <Icons.Settings className="w-4 h-4" />
+            </button>
+          </TechnicalTooltip>
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto px-4 py-5 space-y-6 no-scrollbar relative z-10" ref={scrollRef}>
+      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-5 no-scrollbar relative z-10" ref={scrollRef}>
         {messages.length === 0 && !isHandsFree && (
           <div className="h-full flex flex-col items-center justify-center text-center space-y-6 pb-20 animate-in fade-in">
-            <div className="relative w-20 h-20 glass-premium rounded-[1.8rem] flex items-center justify-center shadow-lg border border-white/10">
-               <Icons.Mic className="w-8 h-8 text-indigo-500/40" />
+            <div className="relative w-16 h-16 glass-premium rounded-2xl flex items-center justify-center shadow-lg border border-white/10">
+               <Icons.Mic className="w-7 h-7 text-indigo-500/30" />
             </div>
-            <div className="space-y-2 px-4">
-              <h2 className="text-xl font-black tracking-tight text-white leading-none text-gradient uppercase">Neural Concierge.</h2>
-              <p className="text-[7px] text-zinc-600 uppercase tracking-[0.4em]">Ready / {userName || 'Client'}</p>
+            <div className="space-y-1.5 px-4">
+              <h2 className="text-xl font-black tracking-tight text-white leading-none text-gradient uppercase">Neural Sync.</h2>
+              <p className="text-[7px] text-zinc-600 uppercase tracking-[0.4em]">Awaiting Instruction / {userName || 'Global'}</p>
             </div>
           </div>
         )}
 
         {messages.map((msg) => (
           <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2`}>
-            <div className={`max-w-[85%] px-3.5 py-2.5 rounded-[1.2rem] text-[13px] font-bold leading-[1.5] shadow-md border tracking-tight ${
+            <div className={`max-w-[85%] px-3 py-2 rounded-[1rem] text-[12.5px] font-bold leading-[1.45] shadow-md border tracking-tight ${
               msg.role === 'user' 
-                ? 'bg-[#0a0a0a] border-white/5 text-zinc-300 rounded-tr-none' 
+                ? 'bg-[#0c0c0c] border-white/5 text-zinc-300 rounded-tr-none' 
                 : 'glass-premium pearlescent border-white/20 text-white rounded-tl-none border-l-2 border-l-indigo-500'
             }`}>
               {msg.content}
             </div>
-            <div className="flex items-center gap-1.5 mt-1.5 px-2">
-              <span className="text-[7px] font-mono font-bold uppercase tracking-[0.15em] flex items-center gap-1.5">
+            <div className="flex items-center gap-1 mt-1 px-1.5">
+              <span className="text-[6.5px] font-mono font-bold uppercase tracking-[0.15em] flex items-center gap-1.5">
                 <span className={msg.role === 'assistant' ? 'text-indigo-500' : 'text-zinc-600'}>
                   {msg.role === 'assistant' ? 'AI' : `${userName || 'USER'}`}
                 </span>
@@ -278,51 +274,51 @@ const App: React.FC = () => {
 
         {isThinking && (
           <div className="flex items-center gap-2 animate-in fade-in duration-300 px-1">
-            <div className="w-6 h-6 glass-dark rounded-md flex items-center justify-center border border-white/10">
-              <div className="w-2 h-2 border-[1.5px] border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
+            <div className="w-5 h-5 glass-dark rounded-md flex items-center justify-center border border-white/10">
+              <div className="w-1.5 h-1.5 border-[1.5px] border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
             </div>
-            <span className="text-[7px] text-zinc-600 font-black uppercase tracking-[0.3em]">Processing...</span>
+            <span className="text-[6.5px] text-zinc-600 font-black uppercase tracking-[0.3em]">Synapsing...</span>
           </div>
         )}
 
-        <div className="h-24"></div>
+        <div className="h-20"></div>
       </main>
 
       {!isHandsFree && (
-        <div className="absolute bottom-0 inset-x-0 glass z-50 px-3 pt-3 pb-5 rounded-t-[1.5rem] safe-area-pb border-t border-white/10">
+        <div className="absolute bottom-0 inset-x-0 glass z-50 px-3 pt-3 pb-4 rounded-t-[1.2rem] safe-area-pb border-t border-white/10">
           <form onSubmit={handleSend} className="relative flex items-center gap-2">
             <div className="relative flex-1">
-              <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Request...`}
-                className="w-full bg-[#0a0a0a]/60 border border-white/10 rounded-[1.2rem] px-4 py-2.5 text-[13px] font-bold outline-none text-white focus:border-indigo-500/30"
+              <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Request synthesis...`}
+                className="w-full bg-[#080808]/60 border border-white/10 rounded-[1rem] px-4 py-2 text-[12.5px] font-bold outline-none text-white focus:border-indigo-500/20 transition-colors"
               />
             </div>
             <button type="submit" disabled={!input.trim() || isThinking}
-              className={`p-2.5 rounded-full border ${!input.trim() || isThinking ? 'bg-zinc-950 border-white/5 text-zinc-900' : 'bg-indigo-600 border-indigo-400 text-white shadow-lg'}`}
+              className={`p-2 rounded-full border transition-all ${!input.trim() || isThinking ? 'bg-zinc-950 border-white/5 text-zinc-900' : 'bg-indigo-600 border-indigo-400 text-white shadow-lg active:scale-90'}`}
             >
-              <Icons.Send className="w-4 h-4" />
+              <Icons.Send className="w-3.5 h-3.5" />
             </button>
           </form>
         </div>
       )}
 
       {isHandsFree && (
-        <div className="absolute inset-0 z-[60] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center p-6 safe-area-pb animate-in fade-in">
-           <div className="relative w-48 h-48 glass-premium pearlescent rounded-full flex items-center justify-center shadow-xl border-white/20 scale-90">
-              <div className="flex gap-1 items-end h-16 mb-2">
-                {[...Array(8)].map((_, i) => (
-                  <div key={i} className="w-1 bg-indigo-500 rounded-full" 
-                    style={{ height: `${30 + Math.random() * 70}%`, animation: `wave 0.5s ease-in-out infinite`, animationDelay: `${i * 0.12}s` }}
+        <div className="absolute inset-0 z-[60] bg-black/98 backdrop-blur-3xl flex flex-col items-center justify-center p-6 safe-area-pb animate-in fade-in">
+           <div className="relative w-40 h-40 glass-premium pearlescent rounded-full flex items-center justify-center shadow-xl border-white/20 scale-90">
+              <div className="flex gap-1 items-end h-14 mb-2">
+                {[...Array(6)].map((_, i) => (
+                  <div key={i} className="w-1 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]" 
+                    style={{ height: `${30 + Math.random() * 70}%`, animation: `wave 0.4s ease-in-out infinite`, animationDelay: `${i * 0.15}s` }}
                   ></div>
                 ))}
               </div>
            </div>
-           <div className="mt-6 text-center space-y-2">
-              <h3 className="text-xl font-black text-white tracking-tighter uppercase">Neural Aura</h3>
-              <p className="text-[7px] text-indigo-400 uppercase tracking-[0.4em] animate-pulse">Session Active</p>
+           <div className="mt-5 text-center space-y-1.5">
+              <h3 className="text-lg font-black text-white tracking-tighter uppercase">Aura Active</h3>
+              <p className="text-[6.5px] text-indigo-400 uppercase tracking-[0.4em] animate-pulse">Neural Capture Enabled</p>
            </div>
-           <div className="absolute bottom-10 left-6 right-6">
-              <button onClick={toggleHandsFree} className="w-full py-4 bg-red-600/90 text-white rounded-[1.5rem] text-[9px] font-black uppercase tracking-[0.4em] shadow-lg">
-                Disconnect
+           <div className="absolute bottom-10 left-8 right-8">
+              <button onClick={toggleHandsFree} className="w-full py-4 bg-red-600/90 text-white rounded-[1.2rem] text-[8.5px] font-black uppercase tracking-[0.4em] shadow-lg active:scale-95 transition-all">
+                Terminate Link
               </button>
            </div>
         </div>
@@ -330,116 +326,103 @@ const App: React.FC = () => {
 
       {showSettings && (
         <div className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-3xl flex items-end justify-center animate-in fade-in" onClick={() => setShowSettings(false)}>
-          <div className="glass-premium pearlescent w-full max-w-lg rounded-t-[2rem] p-6 space-y-6 animate-in slide-in-from-bottom-20 overflow-y-auto no-scrollbar max-h-[85vh] border-t border-white/20" onClick={e => e.stopPropagation()}>
+          <div className="glass-premium pearlescent w-full max-w-lg rounded-t-[1.8rem] p-5 space-y-5 animate-in slide-in-from-bottom-20 overflow-y-auto no-scrollbar max-h-[85vh] border-t border-white/20" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-start">
               <div className="space-y-1">
-                <h3 className="text-lg font-black text-white tracking-tighter uppercase">Calibration</h3>
-                <p className="text-[7px] text-zinc-600 font-bold uppercase tracking-[0.3em]">Node Control v2.1.0</p>
+                <h3 className="text-base font-black text-white tracking-tighter uppercase">Calibration</h3>
+                <p className="text-[6px] text-zinc-600 font-bold uppercase tracking-[0.3em]">Node V2.1.0-Patch</p>
               </div>
-              <button onClick={() => setShowSettings(false)} className="p-1.5 rounded-full glass-dark text-zinc-500 hover:text-white transition-colors">&times;</button>
+              <button onClick={() => setShowSettings(false)} className="p-1 rounded-full glass-dark text-zinc-500 hover:text-white transition-colors">&times;</button>
             </div>
 
-            <div className="space-y-6 pb-6 relative">
-              
-              {/* Identity Calibration */}
-              <section className="space-y-2.5">
-                <div className="flex items-center px-1">
-                  <label className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.2em]">Identity Link</label>
-                  <SystemHint 
-                    title="User Identification" 
-                    text="Synchronizes your chosen identifier with the LLM's context window. This allows the concierge to refer to you by name during vocal turns, enhancing the personalization layer of the bimodal experience." 
-                  />
+            <div className="space-y-5 pb-4">
+              <section className="space-y-2">
+                <div className="flex items-center gap-1.5 px-1">
+                  <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em]">Identity Node</label>
+                  <TechnicalTooltip title="Profile Link" text="Synchronizes your identifier across all modal layers. Ensures the concierge maintains conversational continuity and addresses you correctly.">
+                    <span className="text-indigo-500/40 text-[9px] cursor-help font-black">(?)</span>
+                  </TechnicalTooltip>
                 </div>
-                <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="Access Name..."
-                   className="w-full bg-[#050505]/60 border border-white/10 rounded-[1rem] py-3.5 px-5 text-white text-[12px] font-black outline-none focus:border-indigo-500/30 transition-all"
+                <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="Node Access Name..."
+                   className="w-full bg-[#050505]/60 border border-white/10 rounded-[0.8rem] py-3 px-4 text-white text-[11px] font-black outline-none focus:border-indigo-500/30 transition-all"
                 />
               </section>
 
-              {/* Behavioral Archetype */}
-              <section className="space-y-3">
-                <div className="flex items-center px-1">
-                  <label className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.2em]">Behavioral Core</label>
-                  <SystemHint 
-                    title="Persona Archetype" 
-                    text="Modulates the fundamental persona logic. Each preset recalibrates the model's vocabulary complexity, empathy weighting, and response length to match the selected archetype's conversational goals." 
-                  />
+              <section className="space-y-2.5">
+                <div className="flex items-center gap-1.5 px-1">
+                  <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em]">Behavioral Archetype</label>
+                  <TechnicalTooltip title="LLM Persona" text="Switches the foundational personality matrix. Recalibrates empathy, verbosity, and reasoning style.">
+                    <span className="text-indigo-500/40 text-[9px] cursor-help font-black">(?)</span>
+                  </TechnicalTooltip>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-1.5">
                   {Object.values(VoicePreset).map((p, idx, arr) => (
-                    <button key={p} onClick={() => setPreset(p)}
-                      className={`px-2 py-2.5 rounded-[0.8rem] text-[9px] font-black border uppercase tracking-[0.1em] transition-all relative overflow-hidden ${
-                        preset === p ? 'bg-indigo-600 border-indigo-400 text-white scale-105 z-10 shadow-lg' : 'glass-dark border-white/10 text-zinc-600'
-                      } ${idx === arr.length - 1 ? 'col-span-2' : ''}`}
-                    >
-                      {p}
-                    </button>
+                    <TechnicalTooltip key={idx} title={p.toUpperCase()} text={VoicePresets[p as keyof typeof VoicePresets]}>
+                      <button onClick={() => setPreset(p)}
+                        className={`w-full px-2 py-2 rounded-[0.6rem] text-[8px] font-black border uppercase tracking-[0.1em] transition-all ${
+                          preset === p ? 'bg-indigo-600 border-indigo-400 text-white scale-105 z-10' : 'glass-dark border-white/10 text-zinc-600'
+                        } ${idx === arr.length - 1 ? 'col-span-2' : ''}`}
+                      >
+                        {p}
+                      </button>
+                    </TechnicalTooltip>
                   ))}
                 </div>
               </section>
 
-              {/* Aura Modulation Matrix */}
-              <section className="space-y-4">
-                <div className="flex items-center px-1">
-                  <label className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.2em]">Aura Modulation</label>
-                  <SystemHint 
-                    title="Vocal Prosody Matrix" 
-                    text="Adjusts the emotive cadence and prosodic intensity of the speech engine. These parameters influence the pitch variance, syllable duration, and rhythmic emphasis of synthesized output." 
-                  />
+              <section className="space-y-3">
+                <div className="flex items-center gap-1.5 px-1">
+                  <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em]">Prosody Modulation</label>
+                  <TechnicalTooltip title="Aura Matrix" text="Controls the fine-grained acoustics of the synthesis engine. Affects pacing, pitch variance, and syllabic emphasis.">
+                    <span className="text-indigo-500/40 text-[9px] cursor-help font-black">(?)</span>
+                  </TechnicalTooltip>
                 </div>
-                <div className="glass-dark p-5 rounded-[1.2rem] space-y-5 border border-white/10 shadow-inner">
-                  
+                <div className="glass-dark p-3.5 rounded-[1rem] space-y-4 border border-white/10">
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between px-1">
-                      <span className="text-[7px] text-zinc-600 font-black uppercase tracking-[0.15em]">Tone Profile</span>
-                    </div>
+                    <span className="text-[6.5px] text-zinc-600 font-black uppercase px-1">Tone Matrix</span>
                     <div className="grid grid-cols-3 gap-1.5">
                       {['friendly', 'formal', 'authoritative'].map((t: any) => (
-                        <button key={t} onClick={() => setBrandProfile({...brandProfile, tone: t})}
-                          className={`py-2 rounded-md text-[7px] font-black uppercase tracking-tight border transition-all ${
-                            brandProfile.tone === t 
-                              ? 'bg-white text-black border-white shadow-xl scale-110' 
-                              : 'bg-black/40 text-zinc-700 border-white/5'
-                          }`}
-                        >
-                          {t}
-                        </button>
+                        <TechnicalTooltip key={t} title={t.toUpperCase()} text={`Recalibrates vocal acoustics for a ${t} presence.`}>
+                          <button onClick={() => setBrandProfile({...brandProfile, tone: t})}
+                            className={`w-full py-2 rounded-md text-[6.5px] font-black uppercase tracking-tight border ${
+                              brandProfile.tone === t ? 'bg-white text-black border-white' : 'bg-black/40 text-zinc-700 border-white/5'
+                            }`}
+                          >
+                            {t}
+                          </button>
+                        </TechnicalTooltip>
                       ))}
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <span className="text-[7px] text-zinc-600 font-black uppercase tracking-[0.15em] px-1">Pacing Protocol</span>
-                      <div className="relative">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <span className="text-[6.5px] text-zinc-600 font-black uppercase px-1">Pacing</span>
+                      <TechnicalTooltip title="Temporal Node" text="Adjusts tokens-per-second output.">
                         <select value={brandProfile.pacing} onChange={(e) => setBrandProfile({...brandProfile, pacing: e.target.value as any})}
-                          className="w-full bg-black/60 border border-white/10 rounded-[0.8rem] py-2.5 px-3 text-[8px] font-black uppercase tracking-widest text-zinc-300 outline-none appearance-none"
+                          className="w-full bg-black/60 border border-white/10 rounded-[0.6rem] py-2 px-2 text-[7px] font-black uppercase text-zinc-300 outline-none"
                         >
-                          <option value="measured">Measured (Refined)</option>
-                          <option value="fast">Dynamic (Rapid)</option>
+                          <option value="measured">Measured</option>
+                          <option value="fast">Rapid</option>
                         </select>
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-700 text-[10px]">▼</div>
-                      </div>
+                      </TechnicalTooltip>
                     </div>
-                    
-                    <div className="space-y-2">
-                      <span className="text-[7px] text-zinc-600 font-black uppercase tracking-[0.15em] px-1">Prosody Focus</span>
-                      <div className="relative">
+                    <div className="space-y-1">
+                      <span className="text-[6.5px] text-zinc-600 font-black uppercase px-1">Emphasis</span>
+                      <TechnicalTooltip title="Syllabic Focus" text="Determines the magnitude of vocal spikes.">
                         <select value={brandProfile.emphasisStyle} onChange={(e) => setBrandProfile({...brandProfile, emphasisStyle: e.target.value as any})}
-                          className="w-full bg-black/60 border border-white/10 rounded-[0.8rem] py-2.5 px-3 text-[8px] font-black uppercase tracking-widest text-zinc-300 outline-none appearance-none"
+                          className="w-full bg-black/60 border border-white/10 rounded-[0.6rem] py-2 px-2 text-[7px] font-black uppercase text-zinc-300 outline-none"
                         >
-                          <option value="subtle">Refined (Subtle)</option>
-                          <option value="assertive">Assertive (Impact)</option>
+                          <option value="subtle">Refined</option>
+                          <option value="assertive">Assertive</option>
                         </select>
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-700 text-[10px]">▼</div>
-                      </div>
+                      </TechnicalTooltip>
                     </div>
                   </div>
-
                 </div>
               </section>
 
-              <button onClick={() => setShowSettings(false)} className="w-full py-4.5 bg-indigo-600 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-[0.6em] border border-indigo-400/50 shadow-2xl active:scale-95 transition-transform">
-                Apply Calibration
+              <button onClick={() => setShowSettings(false)} className="w-full py-4 bg-indigo-600 text-white rounded-[1.2rem] text-[9px] font-black uppercase tracking-[0.5em] border border-indigo-400/50 active:scale-95 transition-all shadow-xl">
+                Sync Calibration
               </button>
             </div>
           </div>
