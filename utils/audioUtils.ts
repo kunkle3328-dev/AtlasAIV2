@@ -1,4 +1,3 @@
-
 export function decode(base64: string) {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -61,7 +60,16 @@ export function chunkText(text: string, maxLength = 250): string[] {
  * Injects detailed prosody markup for the synthesis engine to interpret.
  */
 export function injectProsody(chunk: string, preset: any): string {
-  return `<prosody pitch="${preset.pitch}" rate="${preset.rate}" timbre="${preset.timbre}" emphasis="${preset.emphasis}" emotion="${preset.emotion}">${chunk}</prosody>`;
+  return `<prosody 
+    pitch="${preset.pitch}" 
+    rate="${preset.rate}" 
+    timbre="${preset.timbre}" 
+    emphasis="${preset.emphasis}" 
+    emotion="${preset.emotion || preset.baseEmotion}"
+    breathiness="${preset.breathiness || 0}"
+    pause="${preset.pause || 0}">
+      ${chunk}
+  </prosody>`;
 }
 
 export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

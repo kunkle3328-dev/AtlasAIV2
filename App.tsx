@@ -12,6 +12,7 @@ import { chunkText } from './utils/audioUtils';
 import { audioEngine } from './services/audioEngine';
 import { VoicePresets } from './constants/voicePresets';
 import { VoiceControls } from './components/VoiceControls';
+import { VoiceConsole } from './components/VoiceConsole';
 
 /**
  * Premium Technical Tooltip
@@ -57,10 +58,17 @@ const App: React.FC = () => {
   const [isHandsFree, setIsHandsFree] = useState(false);
   const [activeEngine, setActiveEngine] = useState<AudioEngineType>('Gemini Live');
   const [preset, setPreset] = useState<VoicePreset>(VoicePreset.NEUTRAL);
-  const [brandProfile, setBrandProfile] = useState<BrandVoiceProfile>({
-    tone: 'friendly',
-    pacing: 'measured',
-    emphasisStyle: 'subtle'
+  const [brandProfile, setBrandProfile] = useState<BrandVoiceProfile>(() => {
+    const saved = localStorage.getItem('atlas_profile');
+    return saved ? JSON.parse(saved) : {
+      tone: 'friendly',
+      rate: 1.0,
+      pitch: 0,
+      timbre: 0,
+      emphasis: 0.1,
+      pause: 30,
+      breathiness: 0.05
+    };
   });
   const [audioChunks, setAudioChunks] = useState<AudioChunk[]>([]);
   const [showSettings, setShowSettings] = useState(false);
@@ -74,25 +82,20 @@ const App: React.FC = () => {
     }
   }, [messages, audioChunks, isThinking]);
 
-  // Sync user name persistence
+  // Sync user name and calibration persistence
   useEffect(() => {
     localStorage.setItem('atlas_username', userName);
+    localStorage.setItem('atlas_profile', JSON.stringify(brandProfile));
     audioEngine.setConfig(preset, brandProfile, userName);
-  }, [userName]);
-
-  // Sync emotion tracking
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentEmotion(audioEngine.currentEmotion);
-    }, 200);
-    return () => clearInterval(interval);
-  }, []);
+  }, [userName, preset, brandProfile]);
 
   const toggleHandsFree = async () => {
     if (isHandsFree) {
       audioEngine.stopAll();
       setIsHandsFree(false);
       setIsSpeaking(false);
+      const baseEmotion = VoicePresets[preset as keyof typeof VoicePresets]?.baseEmotion || 'neutral';
+      setCurrentEmotion(baseEmotion);
     } else {
       setIsHandsFree(true);
       setIsSpeaking(true);
@@ -147,7 +150,7 @@ const App: React.FC = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const targetName = userName || 'Client';
       const systemInstruction = `You are AtlasAI v2.1. Deliver elite concierge services. Respond with precision. 
-      USER IDENTITY: The client's name is ${targetName}. You MUST address them as ${targetName} directly in your response to maintain a high-end personal concierge feel. Never ignore the user's name.`;
+      USER IDENTITY: The client's name is ${targetName}. You MUST address them as ${targetName} directly in your response.`;
       
       const response = await ai.models.generateContent({
         model: GEMINI_MODEL,
@@ -184,29 +187,34 @@ const App: React.FC = () => {
     setIsSpeaking(true);
     audioEngine.setConfig(preset, brandProfile, userName);
 
-    // CENTRALIZED PIPELINE: Delegate the loop to audioEngine for background resilience
     await audioEngine.speakText(
       text,
       (engine) => {
         setActiveEngine(engine);
       },
-      (index, status) => {
-        setAudioChunks(prev => prev.map((c, idx) => idx === index ? { ...c, status, engine: activeEngine } : c));
+      (index, status, meta) => {
+        if (meta?.emotion) {
+          setCurrentEmotion(meta.emotion);
+        }
+        setAudioChunks(prev => prev.map((c, idx) => idx === index ? { ...c, status, engine: meta?.engine || activeEngine } : c));
       }
     );
 
     setIsSpeaking(false);
+    const baseEmotion = VoicePresets[preset as keyof typeof VoicePresets]?.baseEmotion || 'neutral';
+    setCurrentEmotion(baseEmotion);
   };
 
   const handlePresetChange = (newPreset: VoicePreset) => {
     setPreset(newPreset);
+    const baseEmotion = VoicePresets[newPreset as keyof typeof VoicePresets]?.baseEmotion || 'neutral';
+    setCurrentEmotion(baseEmotion);
     audioEngine.setConfig(newPreset, brandProfile, userName);
   };
 
   const handleUserNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newName = e.target.value;
     setUserName(newName);
-    // Persist and update engine immediately
     localStorage.setItem('atlas_username', newName);
     audioEngine.setConfig(preset, brandProfile, newName);
   };
@@ -240,12 +248,12 @@ const App: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <TechnicalTooltip title="Bimodal Session" text="Toggles the real-time hands-free communication node. Utilizes the Gemini 2.5 Flash Native Audio model for ultra-low latency interaction.">
+          <TechnicalTooltip title="Bimodal Session" text="Toggles ultra-low latency audio-to-audio mode. [Suggested Use: Real-time conversation] - Why: Direct neural processing bypasses text rendering, enabling natural interruptions and fluid exchanges.">
             <button onClick={toggleHandsFree} className={`p-1.5 rounded-lg btn-premium border ${isHandsFree ? 'bg-red-600 text-white border-red-400 shadow-[0_0_20px_rgba(220,38,38,0.4)]' : 'glass-dark text-zinc-400 border-white/10'}`}>
               {isHandsFree ? <Icons.MicOff className="w-4 h-4" /> : <Icons.Mic className="w-4 h-4" />}
             </button>
           </TechnicalTooltip>
-          <TechnicalTooltip title="System Core" text="Access the neural calibration parameters. Modify behavioral archetypes and vocal prosody matrices.">
+          <TechnicalTooltip title="System Core" text="Neural calibration interface. [Suggested Use: Tailoring Brand Identity] - Why: Allows deep acoustic personalization of the agent's persona to match specific professional or creative contexts.">
             <button onClick={() => setShowSettings(true)} className="p-1.5 rounded-lg glass-dark btn-premium text-zinc-400 border border-white/10">
               <Icons.Settings className="w-4 h-4" />
             </button>
@@ -352,16 +360,16 @@ const App: React.FC = () => {
             <div className="flex justify-between items-start">
               <div className="space-y-1">
                 <h3 className="text-base font-black text-white tracking-tighter uppercase">Calibration</h3>
-                <p className="text-[6px] text-zinc-600 font-bold uppercase tracking-[0.3em]">Node V2.1.0-Patch</p>
+                <p className="text-[6px] text-zinc-600 font-bold uppercase tracking-[0.3em]">Node V2.2.0-Core</p>
               </div>
               <button onClick={() => setShowSettings(false)} className="p-1 rounded-full glass-dark text-zinc-500 hover:text-white transition-colors">&times;</button>
             </div>
 
-            <div className="space-y-5 pb-4">
+            <div className="space-y-6 pb-6">
               <section className="space-y-2">
                 <div className="flex items-center gap-1.5 px-1">
                   <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em]">Identity Node</label>
-                  <TechnicalTooltip title="Profile Link" text="Synchronizes your identifier across all modal layers. Ensures the concierge maintains conversational continuity and addresses you correctly.">
+                  <TechnicalTooltip title="Profile Link" text="Synchronizes your identifier across all modal layers.">
                     <span className="text-indigo-500/40 text-[9px] cursor-help font-black">(?)</span>
                   </TechnicalTooltip>
                 </div>
@@ -370,81 +378,18 @@ const App: React.FC = () => {
                 />
               </section>
 
-              <section className="space-y-2.5">
-                <div className="flex items-center gap-1.5 px-1">
-                  <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em]">Behavioral Archetype</label>
-                  <TechnicalTooltip title="LLM Persona" text="Switches the foundational personality matrix. Recalibrates empathy, verbosity, and reasoning style.">
-                    <span className="text-indigo-500/40 text-[9px] cursor-help font-black">(?)</span>
-                  </TechnicalTooltip>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {Object.values(VoicePreset).map((p, idx, arr) => {
-                    const presetInfo = VoicePresets[p as keyof typeof VoicePresets];
-                    return (
-                      <TechnicalTooltip key={idx} title={p.toUpperCase()} text={presetInfo.description}>
-                        <button onClick={() => handlePresetChange(p)}
-                          className={`w-full px-2 py-2 rounded-[0.6rem] text-[8px] font-black border uppercase tracking-[0.1em] transition-all ${
-                            preset === p ? 'bg-indigo-600 border-indigo-400 text-white scale-105 z-10' : 'glass-dark border-white/10 text-zinc-600'
-                          } ${idx === arr.length - 1 ? 'col-span-2' : ''}`}
-                        >
-                          {p}
-                        </button>
-                      </TechnicalTooltip>
-                    );
-                  })}
-                </div>
-              </section>
-
-              <section className="space-y-3">
-                <div className="flex items-center gap-1.5 px-1">
-                  <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em]">Prosody Modulation</label>
-                  <TechnicalTooltip title="Aura Matrix" text="Controls the fine-grained acoustics of the synthesis engine. Affects pacing, pitch variance, and syllabic emphasis.">
-                    <span className="text-indigo-500/40 text-[9px] cursor-help font-black">(?)</span>
-                  </TechnicalTooltip>
-                </div>
-                <div className="glass-dark p-3.5 rounded-[1rem] space-y-4 border border-white/10">
-                  <div className="space-y-2">
-                    <span className="text-[6.5px] text-zinc-600 font-black uppercase px-1">Tone Matrix</span>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {['friendly', 'formal', 'authoritative'].map((t: any) => (
-                        <TechnicalTooltip key={t} title={t.toUpperCase()} text={`Recalibrates vocal acoustics for a ${t} presence.`}>
-                          <button onClick={() => setBrandProfile({...brandProfile, tone: t})}
-                            className={`w-full py-2 rounded-md text-[6.5px] font-black uppercase tracking-tight border ${
-                              brandProfile.tone === t ? 'bg-white text-black border-white' : 'bg-black/40 text-zinc-700 border-white/5'
-                            }`}
-                          >
-                            {t}
-                          </button>
-                        </TechnicalTooltip>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <span className="text-[6.5px] text-zinc-600 font-black uppercase px-1">Pacing</span>
-                      <TechnicalTooltip title="Temporal Node" text="Adjusts tokens-per-second output.">
-                        <select value={brandProfile.pacing} onChange={(e) => setBrandProfile({...brandProfile, pacing: e.target.value as any})}
-                          className="w-full bg-black/60 border border-white/10 rounded-[0.6rem] py-2 px-2 text-[7px] font-black uppercase text-zinc-300 outline-none"
-                        >
-                          <option value="measured">Measured</option>
-                          <option value="fast">Rapid</option>
-                        </select>
-                      </TechnicalTooltip>
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-[6.5px] text-zinc-600 font-black uppercase px-1">Emphasis</span>
-                      <TechnicalTooltip title="Syllabic Focus" text="Determines the magnitude of vocal spikes.">
-                        <select value={brandProfile.emphasisStyle} onChange={(e) => setBrandProfile({...brandProfile, emphasisStyle: e.target.value as any})}
-                          className="w-full bg-black/60 border border-white/10 rounded-[0.6rem] py-2 px-2 text-[7px] font-black uppercase text-zinc-300 outline-none"
-                        >
-                          <option value="subtle">Refined</option>
-                          <option value="assertive">Assertive</option>
-                        </select>
-                      </TechnicalTooltip>
-                    </div>
-                  </div>
-                </div>
-              </section>
+              <VoiceConsole 
+                selectedPreset={preset}
+                brandProfile={brandProfile}
+                onPresetChange={handlePresetChange}
+                onProfileChange={setBrandProfile}
+                currentEmotion={currentEmotion}
+                isSpeaking={isSpeaking}
+                onPreview={(text) => {
+                  audioEngine.setConfig(preset, brandProfile, userName);
+                  audioEngine.speak(text, (eng) => setActiveEngine(eng));
+                }}
+              />
 
               <button onClick={() => setShowSettings(false)} className="w-full py-4 bg-indigo-600 text-white rounded-[1.2rem] text-[9px] font-black uppercase tracking-[0.5em] border border-indigo-400/50 active:scale-95 transition-all shadow-xl">
                 Sync Calibration

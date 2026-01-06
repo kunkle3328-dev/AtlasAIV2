@@ -2,8 +2,12 @@ import { GoogleGenAI, LiveServerMessage, Modality, Blob } from '@google/genai';
 import { AudioEngineType, VoicePreset, BrandVoiceProfile } from '../types';
 import { decode, decodeAudioData, encode, sleep, injectProsody, chunkText } from '../utils/audioUtils';
 import { higgsService } from './higgsService';
-import { LIVE_MODEL } from '../constants';
-import { VoicePresets } from '../constants/voicePresets';
+import { LIVE_MODEL, VoicePresets } from '../constants/voicePresets';
+
+export interface ChunkMetadata {
+  emotion: string;
+  engine: AudioEngineType;
+}
 
 export class HybridAudioEngine {
   private outputAudioContext: AudioContext | null = null;
@@ -13,12 +17,19 @@ export class HybridAudioEngine {
   private sources: Set<AudioBufferSourceNode> = new Set();
   private isGeminiQuotaExceeded: boolean = false;
   private currentPreset: VoicePreset = VoicePreset.NEUTRAL;
-  private brandProfile: BrandVoiceProfile | null = null;
+  private brandProfile: BrandVoiceProfile = {
+    tone: 'friendly',
+    rate: 1.0,
+    pitch: 0,
+    timbre: 0,
+    emphasis: 0.1,
+    pause: 0,
+    breathiness: 0
+  };
   private activeSessionPromise: Promise<any> | null = null;
   private mediaStream: MediaStream | null = null;
   private userName: string = '';
   
-  // Public state for tracking
   public currentEmotion: string = 'neutral';
 
   private initContexts() {
@@ -32,56 +43,74 @@ export class HybridAudioEngine {
     }
   }
 
-  /**
-   * Semantic emotion analyzer.
-   * Modulates the base emotion based on linguistic cues.
-   */
   private analyzeEmotion(text: string, baseEmotion: string): string {
     const lowerText = text.toLowerCase();
-    let emotion = baseEmotion;
-    if (/!|\bexcited\b|\bamazing\b|\bwow\b|\bgreat\b/i.test(lowerText)) emotion = "excited";
-    else if (/\?|\bcurious\b|\bwonder\b|\breally\b/i.test(lowerText)) emotion = "curious";
-    else if (/sorry|apolog|regret|unfortunate/i.test(lowerText)) emotion = "empathetic";
-    else if (/warning|caution|critical|urgent|stop/i.test(lowerText)) emotion = "serious";
-    else if (/\bha\b|\bfunny\b|\blol\b|laugh/i.test(lowerText)) emotion = "cheerful";
+    if (/!|\bexcited\b|\bamazing\b|\bwow\b|\bgreat\b/i.test(lowerText)) return "excited";
+    if (/\?|\bcurious\b|\bwonder\b|\breally\b/i.test(lowerText)) return "curious";
+    if (/sorry|apolog|regret|unfortunate/i.test(lowerText)) return "empathetic";
+    if (/warning|caution|critical|urgent|stop/i.test(lowerText)) return "serious";
+    if (/\bha\b|\bfunny\b|\blol\b|laugh/i.test(lowerText)) return "cheerful";
     
-    this.currentEmotion = emotion;
-    return emotion;
+    return baseEmotion;
   }
 
-  public setConfig(preset: VoicePreset, brandProfile: BrandVoiceProfile | null, userName: string) {
+  public setConfig(preset: VoicePreset, brandProfile: BrandVoiceProfile, userName: string) {
     this.currentPreset = preset;
     this.brandProfile = brandProfile;
     this.userName = userName;
   }
 
-  /**
-   * Centralized speaking pipeline to ensure background persistence.
-   */
+  public getMergedPreset() {
+    const base = VoicePresets[this.currentPreset as keyof typeof VoicePresets] || VoicePresets.neutral;
+    return {
+      ...base,
+      rate: this.brandProfile.rate ?? base.rate,
+      pitch: this.brandProfile.pitch ?? base.pitch,
+      timbre: this.brandProfile.timbre ?? base.timbre,
+      emphasis: this.brandProfile.emphasis ?? base.emphasis,
+      pause: this.brandProfile.pause ?? base.pause,
+      breathiness: this.brandProfile.breathiness ?? base.breathiness,
+      baseEmotion: this.brandProfile.emotion || base.baseEmotion
+    };
+  }
+
   public async speakText(
     fullText: string, 
     onEngineSwitch: (engine: AudioEngineType) => void, 
-    onChunkUpdate: (index: number, status: 'playing' | 'completed' | 'error') => void
+    onChunkUpdate: (index: number, status: 'playing' | 'completed' | 'error', meta?: ChunkMetadata) => void
   ): Promise<void> {
     const chunks = chunkText(fullText);
     for (let i = 0; i < chunks.length; i++) {
-      onChunkUpdate(i, 'playing');
+      // Re-fetch merged preset every chunk to allow live parameter adjustment
+      const mergedPreset = this.getMergedPreset();
+      const dynamicEmotion = this.analyzeEmotion(chunks[i], mergedPreset.baseEmotion);
+      const engine: AudioEngineType = this.isGeminiQuotaExceeded ? 'Studio Voice (Higgs)' : 'Gemini Live';
+      
+      onChunkUpdate(i, 'playing', { emotion: dynamicEmotion, engine });
+      
       try {
         await this.speak(chunks[i], onEngineSwitch);
-        onChunkUpdate(i, 'completed');
+        onChunkUpdate(i, 'completed', { emotion: dynamicEmotion, engine });
       } catch (err) {
-        onChunkUpdate(i, 'error');
+        onChunkUpdate(i, 'error', { emotion: dynamicEmotion, engine });
         console.error("Chunk synthesis error:", err);
       }
-      // Small buffer between chunks for natural cadence
-      await sleep(150);
+      
+      // Allow for semantic pausing if configured
+      if (mergedPreset.pause > 0) {
+        await sleep(mergedPreset.pause);
+      } else {
+        await sleep(150);
+      }
     }
+    this.currentEmotion = this.getMergedPreset().baseEmotion;
   }
 
   public async speak(chunkText: string, onEngineSwitch: (engine: AudioEngineType) => void): Promise<void> {
-    const presetData = VoicePresets[this.currentPreset as keyof typeof VoicePresets] || VoicePresets.neutral;
-    const dynamicEmotion = this.analyzeEmotion(chunkText, presetData.baseEmotion);
-    const prosodyChunk = injectProsody(chunkText, { ...presetData, emotion: dynamicEmotion });
+    const mergedPreset = this.getMergedPreset();
+    const dynamicEmotion = this.analyzeEmotion(chunkText, mergedPreset.baseEmotion);
+    this.currentEmotion = dynamicEmotion;
+    const prosodyChunk = injectProsody(chunkText, { ...mergedPreset, emotion: dynamicEmotion });
 
     if (this.isGeminiQuotaExceeded) {
       onEngineSwitch('Studio Voice (Higgs)');
@@ -96,12 +125,9 @@ export class HybridAudioEngine {
       const errorMsg = error?.message || '';
       if (error?.status === 429 || errorMsg.includes('RESOURCE_EXHAUSTED')) {
         this.isGeminiQuotaExceeded = true;
-        onEngineSwitch('Studio Voice (Higgs)');
-        await this.speakWithHiggs(prosodyChunk);
-      } else {
-        onEngineSwitch('Studio Voice (Higgs)');
-        await this.speakWithHiggs(prosodyChunk);
       }
+      onEngineSwitch('Studio Voice (Higgs)');
+      await this.speakWithHiggs(prosodyChunk);
     }
   }
 
@@ -113,7 +139,7 @@ export class HybridAudioEngine {
     this.initContexts();
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const instruction = `${this.getInstruction()} 
-    DYNAMIC STATE: Currently expressing with a ${dynamicEmotion} inflection.`;
+    DYNAMIC STATE: Currently expressing with a ${dynamicEmotion} nuance.`;
 
     const response = await ai.models.generateContent({
       model: LIVE_MODEL,
@@ -145,11 +171,7 @@ export class HybridAudioEngine {
     this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     
     const instruction = `${this.getInstruction()} 
-    IMPORTANT CONVERSATIONAL RULES:
-    1. Be highly conversational and natural. Use verbal fillers like "hmm" or "I see" sparingly to sound human.
-    2. Adhere strictly to the requested acoustic timbre. 
-    3. Dynamically shift your prosody based on the emotional subtext of the conversation.
-    4. Since you are in a live stream, always keep your responses brief and focus on the user: ${this.userName || 'Client'}.`;
+    LIVE STREAM MODE: Keep responses brief, addressing ${this.userName || 'Client'} directly.`;
 
     const sessionPromise = ai.live.connect({
       model: LIVE_MODEL,
@@ -167,91 +189,52 @@ export class HybridAudioEngine {
           onEngineStatus('Gemini Live');
           const source = this.inputAudioContext!.createMediaStreamSource(this.mediaStream!);
           const scriptProcessor = this.inputAudioContext!.createScriptProcessor(1024, 1, 1);
-          
           scriptProcessor.onaudioprocess = (e) => {
             const inputData = e.inputBuffer.getChannelData(0);
             const pcmBlob = this.createBlob(inputData);
-            sessionPromise.then(session => {
-              session.sendRealtimeInput({ media: pcmBlob });
-            });
+            sessionPromise.then(session => session.sendRealtimeInput({ media: pcmBlob }));
           };
-          
           source.connect(scriptProcessor);
           scriptProcessor.connect(this.inputAudioContext!.destination);
         },
         onmessage: async (message: LiveServerMessage) => {
-          if (message.serverContent?.inputTranscription?.text) {
-            onTranscription(message.serverContent.inputTranscription.text, 'user');
-          }
-          if (message.serverContent?.outputTranscription?.text) {
-            onTranscription(message.serverContent.outputTranscription.text, 'assistant');
-          }
-
+          if (message.serverContent?.inputTranscription?.text) onTranscription(message.serverContent.inputTranscription.text, 'user');
+          if (message.serverContent?.outputTranscription?.text) onTranscription(message.serverContent.outputTranscription.text, 'assistant');
           const parts = message.serverContent?.modelTurn?.parts || [];
           for (const part of parts) {
-            if (part.inlineData?.data) {
-              await this.playAudioBytes(part.inlineData.data);
-            }
+            if (part.inlineData?.data) await this.playAudioBytes(part.inlineData.data);
           }
-
-          if (message.serverContent?.interrupted) {
-            this.stopPlayback();
-          }
+          if (message.serverContent?.interrupted) this.stopPlayback();
         },
         onerror: (e) => onEngineStatus('Studio Voice (Higgs)'),
         onclose: () => {
-          console.log("Session terminated.");
           this.currentEmotion = 'neutral';
         },
       }
     });
-
     this.activeSessionPromise = sessionPromise;
   }
 
   private getInstruction() {
-    const presetData = VoicePresets[this.currentPreset as keyof typeof VoicePresets] || VoicePresets.neutral;
+    const mergedPreset = this.getMergedPreset();
     const targetName = this.userName || 'Client';
-    let instruction = `You are AtlasAI, an elite knowledge concierge. 
-    USER IDENTITY: Your client's name is ${targetName}. You must ALWAYS refer to them as ${targetName} throughout the conversation to maintain a personalized elite experience.
-    
+    return `You are AtlasAI, an elite knowledge concierge. 
+    USER IDENTITY: Your client's name is ${targetName}. You must ALWAYS refer to them as ${targetName} throughout the conversation.
     FOUNDATIONAL VOCAL STAMP:
-    - Pitch Shift: ${presetData.pitch}
-    - Speed Rate: ${presetData.rate}
-    - Acoustic Timbre: ${presetData.timbre}
-    - Baseline Emotion: ${presetData.baseEmotion}
-    - Syllabic Emphasis: ${presetData.emphasis}
-
-    Synthesize audio using highly realistic, human cadences. Avoid monotone. Adaptive prosody is mandatory.`;
-
-    if (this.brandProfile) {
-      instruction += ` Additionally, ensure a ${this.brandProfile.tone} tone and ${this.brandProfile.pacing} delivery.`;
-    }
-
-    return instruction;
+    - Pitch: ${mergedPreset.pitch}, Rate: ${mergedPreset.rate}, Timbre: ${mergedPreset.timbre}, Emotion: ${mergedPreset.baseEmotion}, Emphasis: ${mergedPreset.emphasis}, Breathiness: ${mergedPreset.breathiness}, Pause: ${mergedPreset.pause}ms
+    Synthesize audio using highly realistic, human cadences. Adaptive prosody is mandatory.`;
   }
 
   private createBlob(data: Float32Array): Blob {
-    const l = data.length;
-    const int16 = new Int16Array(l);
-    for (let i = 0; i < l; i++) {
-      int16[i] = data[i] * 32768;
-    }
-    return {
-      data: encode(new Uint8Array(int16.buffer)),
-      mimeType: 'audio/pcm;rate=16000',
-    };
+    const int16 = new Int16Array(data.length);
+    for (let i = 0; i < data.length; i++) int16[i] = data[i] * 32768;
+    return { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
   }
 
   private async playAudioBytes(base64: string) {
     if (!this.outputAudioContext || !this.outputNode) return;
     this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
-    const audioBuffer = await decodeAudioData(
-      decode(base64),
-      this.outputAudioContext,
-      24000,
-      1
-    );
+    const audioBuffer = await decodeAudioData(decode(base64), this.outputAudioContext, 24000, 1);
     const source = this.outputAudioContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(this.outputNode);
@@ -262,9 +245,7 @@ export class HybridAudioEngine {
   }
 
   private stopPlayback() {
-    for (const source of this.sources) {
-      try { source.stop(); } catch(e) {}
-    }
+    for (const source of this.sources) try { source.stop(); } catch(e) {}
     this.sources.clear();
     this.nextStartTime = 0;
     this.currentEmotion = 'neutral';
@@ -280,10 +261,7 @@ export class HybridAudioEngine {
       this.mediaStream.getTracks().forEach(track => track.stop());
       this.mediaStream = null;
     }
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-    this.currentEmotion = 'neutral';
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 }
 

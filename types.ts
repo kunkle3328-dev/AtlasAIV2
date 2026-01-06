@@ -4,13 +4,22 @@ export enum VoicePreset {
   WARM = 'warm',
   CONFIDENT = 'confident',
   STORYTELLER = 'storyteller',
-  INSTRUCTIONAL = 'instructional'
+  INSTRUCTIONAL = 'instructional',
+  FRIENDLY = 'friendly',
+  EMPATHETIC = 'empathetic',
+  EXCITED = 'excited',
+  CURIOUS = 'curious'
 }
 
 export interface BrandVoiceProfile {
   tone: 'formal' | 'friendly' | 'authoritative';
-  pacing: 'measured' | 'fast';
-  emphasisStyle: 'subtle' | 'assertive';
+  rate: number;
+  pitch: number;
+  timbre: number;
+  emphasis: number;
+  pause: number;
+  breathiness: number;
+  emotion?: string;
 }
 
 export type AudioEngineType = 'Gemini Live' | 'Studio Voice (Higgs)';
