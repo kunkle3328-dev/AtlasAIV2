@@ -1,7 +1,11 @@
 import React from "react";
 import { VoicePresets } from "../constants/voicePresets";
-import { VoicePreset, BrandVoiceProfile, AudioEngineType } from "../types";
-import { audioEngine } from "../services/audioEngine";
+import { VoicePreset, BrandVoiceProfile } from "../types";
+import { updateVoiceMemory } from "../services/voiceMemoryService";
+import { VoiceMemoryToggle } from "./VoiceMemoryToggle";
+import { VoicePersonaSelector } from "./VoicePersonaSelector";
+import { PersonaExportPanel } from "./PersonaExportPanel";
+import { VoiceArchetypes, ArchetypeKey } from "../voiceArchetypes";
 
 interface VoiceConsoleProps {
   selectedPreset: VoicePreset;
@@ -49,7 +53,7 @@ export const VoiceConsole: React.FC<VoiceConsoleProps> = ({
       min: -1, 
       max: 1, 
       step: 0.05, 
-      tooltip: "Modulates fundamental frequency. [Suggested: -0.15] - Why: Slight negative values add authoritative 'gravitas' and reduce synthetic tininess, while positive values project youthful energy." 
+      tooltip: "Modulates fundamental frequency. User overrides take precedence over archetypes." 
     },
     { 
       label: "Pace Calibration", 
@@ -57,7 +61,7 @@ export const VoiceConsole: React.FC<VoiceConsoleProps> = ({
       min: 0.5, 
       max: 2.0, 
       step: 0.1, 
-      tooltip: "Sets words-per-minute delivery. [Suggested: 1.05] - Why: A minor speed boost (5%) simulates high-intelligence processing and proactive assistance without sacrificing comprehension." 
+      tooltip: "Sets words-per-minute delivery. Archetypes suggest optimal speeds for context." 
     },
     { 
       label: "Acoustic Timbre", 
@@ -65,63 +69,117 @@ export const VoiceConsole: React.FC<VoiceConsoleProps> = ({
       min: -0.5, 
       max: 0.5, 
       step: 0.05, 
-      tooltip: "Shifts tonal resonance quality. [Suggested: 0.10] - Why: Positive timbre increases 'warmth' and 'softness', neutralizing the metallic edge often present in purely digital synthesis." 
+      tooltip: "Shifts tonal resonance quality." 
     },
     { 
       label: "Vocal Emphasis", 
       key: "emphasis", 
       min: 0, 
-      max: 1.0, 
+      max: 1.5, 
       step: 0.05, 
-      tooltip: "Intensity of stressed syllables. [Suggested: 0.25] - Why: Higher emphasis creates a more engaging, dynamic speaker that avoids the 'monotone' fatigue of standard assistants." 
-    },
-    { 
-      label: "Breathiness", 
-      key: "breathiness", 
-      min: 0, 
-      max: 0.3, 
-      step: 0.01, 
-      tooltip: "Introduces soft airflow texture. [Suggested: 0.08] - Why: Mimics human respiration. Small amounts of air make the voice feel more grounded, intimate, and less physically impossible." 
+      tooltip: "Intensity of stressed syllables. Higher emphasis creates more engaging delivery." 
     },
     { 
       label: "Semantic Pause", 
       key: "pause", 
       min: 0, 
-      max: 500, 
+      max: 1000, 
       step: 10, 
-      tooltip: "Delay between thought blocks. [Suggested: 60ms] - Why: Short pauses allow the listener to process information during transitions, mimicking the natural micro-rests in human cognition." 
+      tooltip: "Delay between thought blocks. Executive archetypes typically use longer pauses." 
+    },
+    { 
+      label: "Variability", 
+      key: "variability", 
+      min: 0, 
+      max: 1.0, 
+      step: 0.05, 
+      tooltip: "Neural variance in pitch/rate. Storytellers require high variability." 
     }
   ];
 
   const handleSliderChange = (key: string, value: number) => {
-    onProfileChange({ ...brandProfile, [key]: value });
+    const updated = { ...brandProfile, [key]: value, __manualOverride: true };
+    onProfileChange(updated);
+    updateVoiceMemory({ profileOverrides: updated });
   };
 
-  const activeEmotion = currentEmotion || VoicePresets[selectedPreset]?.baseEmotion || 'neutral';
+  const handleArchetypeSelection = (key: ArchetypeKey) => {
+    const arch = VoiceArchetypes[key];
+    const updated = { 
+      ...brandProfile, 
+      ...arch, 
+      archetype: key, 
+      __manualOverride: false // Re-enable auto-logic for the new archetype
+    };
+    onProfileChange(updated);
+    updateVoiceMemory({ profileOverrides: updated });
+  };
+
+  const handleReset = () => {
+    const defaultProfile: BrandVoiceProfile = {
+      tone: 'friendly',
+      rate: 1.0,
+      pitch: 0,
+      timbre: 0,
+      emphasis: 0.1,
+      pause: 30,
+      breathiness: 0.05,
+      variability: 0.2,
+      __manualOverride: false
+    };
+    onProfileChange(defaultProfile);
+    updateVoiceMemory({ profileOverrides: defaultProfile });
+  };
+
+  const activeEmotion = currentEmotion || VoicePresets[selectedPreset]?.emotion || 'neutral';
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-500">
+      <VoicePersonaSelector 
+        currentProfile={brandProfile} 
+        onSelect={(profile: BrandVoiceProfile) => onProfileChange({ ...profile, __manualOverride: true })} 
+      />
+      
       <div className="space-y-3">
-        <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em] px-1">Archetype Selection</label>
-        <div className="grid grid-cols-3 gap-1.5">
-          {(Object.keys(VoicePresets) as VoicePreset[]).map((key) => (
+        <div className="flex items-center justify-between px-1">
+          <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em]">Voice Archetype</label>
+          {brandProfile.archetype && !brandProfile.__manualOverride && (
+            <span className="text-[6px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-400/10 px-1.5 py-0.5 rounded-full border border-emerald-400/20">
+              Auto-tuned
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {(Object.keys(VoiceArchetypes) as ArchetypeKey[]).map((key) => (
             <button
               key={key}
-              onClick={() => onPresetChange(key)}
-              className={`py-2.5 rounded-xl text-[8px] font-black uppercase tracking-tighter border transition-all active:scale-95 ${
-                selectedPreset === key 
-                  ? "bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20" 
+              onClick={() => handleArchetypeSelection(key)}
+              className={`flex-1 min-w-[100px] py-2 rounded-xl text-[8px] font-black uppercase tracking-tighter border transition-all active:scale-95 ${
+                brandProfile.archetype === key 
+                  ? "bg-emerald-600 border-emerald-400 text-white shadow-lg shadow-emerald-500/20" 
                   : "glass-dark border-white/5 text-zinc-600 hover:text-zinc-400"
               }`}
             >
-              {key}
+              {VoiceArchetypes[key].label}
             </button>
           ))}
         </div>
       </div>
 
+      <PersonaExportPanel />
+      
+      <VoiceMemoryToggle />
+
       <div className="space-y-4">
-        <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em] px-1">Prosody Matrix Editor (Live)</label>
+        <div className="flex items-center justify-between px-1">
+          <label className="text-[7.5px] font-black text-zinc-500 uppercase tracking-[0.2em]">Prosody Matrix Editor</label>
+          <button 
+            onClick={handleReset}
+            className="text-[7px] font-black text-indigo-400 uppercase tracking-widest hover:text-white transition-colors"
+          >
+            Reset Defaults
+          </button>
+        </div>
         <div className="glass-dark p-4 rounded-[1.5rem] space-y-5 border border-white/10 shadow-inner">
           {sliderConfig.map((s) => (
             <TechnicalTooltip key={s.key} label={s.label} text={s.tooltip}>
@@ -131,28 +189,16 @@ export const VoiceConsole: React.FC<VoiceConsoleProps> = ({
                   min={s.min}
                   max={s.max}
                   step={s.step}
-                  value={(brandProfile as any)[s.key] ?? (VoicePresets[selectedPreset] as any)[s.key] ?? 0}
+                  value={(brandProfile as any)[s.key] ?? 0}
                   onChange={(e) => handleSliderChange(s.key, parseFloat(e.target.value))}
                   className="flex-1 accent-indigo-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
                 />
-                <span className="text-[7.5px] font-mono font-bold text-indigo-400 w-8 text-right">
+                <span className="text-[7.5px] font-mono font-bold text-indigo-400 w-10 text-right">
                   {typeof (brandProfile as any)[s.key] === 'number' ? (brandProfile as any)[s.key].toFixed(2) : '0.00'}
                 </span>
               </div>
             </TechnicalTooltip>
           ))}
-
-          <TechnicalTooltip label="Base Affect" text="The primary emotional foundation. [Suggested: Empathetic] - Why: Provides a caring baseline that prevents technical responses from feeling cold or dismissive.">
-            <select
-              value={brandProfile.emotion || VoicePresets[selectedPreset].baseEmotion}
-              onChange={(e) => onProfileChange({...brandProfile, emotion: e.target.value})}
-              className="w-full bg-black/60 border border-white/10 rounded-xl py-2 px-3 text-white text-[9px] font-black uppercase outline-none focus:border-indigo-500/30"
-            >
-              {["neutral","warm","confident","storytelling","instructional","friendly","empathetic","excited","curious"].map(e => (
-                <option key={e} value={e}>{e}</option>
-              ))}
-            </select>
-          </TechnicalTooltip>
         </div>
       </div>
 
@@ -164,8 +210,8 @@ export const VoiceConsole: React.FC<VoiceConsoleProps> = ({
           </span>
         </div>
         <button 
-          onClick={() => onPreview("System calibration check. Assessing vocal timbre and emotional resonance with live parameter adjustment active.")}
-          className="px-4 py-2 bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 text-[8px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-600/40 transition-all active:scale-95"
+          onClick={() => onPreview("Archetype calibration active. Prosody matrix resolved and variability set to dynamic mode.")}
+          className="px-4 py-2 bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 text-[8px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-600/40 transition-all active:scale-95 shadow-lg shadow-indigo-500/5"
         >
           Preview Node
         </button>

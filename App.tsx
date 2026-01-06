@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { 
@@ -13,6 +14,8 @@ import { audioEngine } from './services/audioEngine';
 import { VoicePresets } from './constants/voicePresets';
 import { VoiceControls } from './components/VoiceControls';
 import { VoiceConsole } from './components/VoiceConsole';
+import { loadVoiceMemory } from './services/voiceMemoryService';
+import { VoiceSessionPanel } from './components/VoiceSessionPanel';
 
 /**
  * Premium Technical Tooltip
@@ -57,10 +60,17 @@ const App: React.FC = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isHandsFree, setIsHandsFree] = useState(false);
   const [activeEngine, setActiveEngine] = useState<AudioEngineType>('Gemini Live');
-  const [preset, setPreset] = useState<VoicePreset>(VoicePreset.NEUTRAL);
+  
+  // AtlasAIV2 v2.5 Voice Memory Integration
+  const [preset, setPreset] = useState<VoicePreset>(() => {
+    const memory = loadVoiceMemory();
+    return (memory?.preferredPreset as VoicePreset) || VoicePreset.NEUTRAL;
+  });
+  
   const [brandProfile, setBrandProfile] = useState<BrandVoiceProfile>(() => {
+    const memory = loadVoiceMemory();
     const saved = localStorage.getItem('atlas_profile');
-    return saved ? JSON.parse(saved) : {
+    const profile = saved ? JSON.parse(saved) : {
       tone: 'friendly',
       rate: 1.0,
       pitch: 0,
@@ -69,7 +79,14 @@ const App: React.FC = () => {
       pause: 30,
       breathiness: 0.05
     };
+    
+    // Merge memory overrides if enabled
+    if (memory?.enabled !== false && memory?.profileOverrides) {
+       return { ...profile, ...memory.profileOverrides };
+    }
+    return profile;
   });
+
   const [audioChunks, setAudioChunks] = useState<AudioChunk[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [currentEmotion, setCurrentEmotion] = useState('neutral');
@@ -94,7 +111,7 @@ const App: React.FC = () => {
       audioEngine.stopAll();
       setIsHandsFree(false);
       setIsSpeaking(false);
-      const baseEmotion = VoicePresets[preset as keyof typeof VoicePresets]?.baseEmotion || 'neutral';
+      const baseEmotion = VoicePresets[preset as keyof typeof VoicePresets]?.emotion || 'neutral';
       setCurrentEmotion(baseEmotion);
     } else {
       setIsHandsFree(true);
@@ -149,7 +166,7 @@ const App: React.FC = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const targetName = userName || 'Client';
-      const systemInstruction = `You are AtlasAI v2.1. Deliver elite concierge services. Respond with precision. 
+      const systemInstruction = `You are AtlasAI v2.6. Deliver elite concierge services. Respond with precision. 
       USER IDENTITY: The client's name is ${targetName}. You MUST address them as ${targetName} directly in your response.`;
       
       const response = await ai.models.generateContent({
@@ -196,18 +213,18 @@ const App: React.FC = () => {
         if (meta?.emotion) {
           setCurrentEmotion(meta.emotion);
         }
-        setAudioChunks(prev => prev.map((c, idx) => idx === index ? { ...c, status, engine: meta?.engine || activeEngine } : c));
+        setAudioChunks(prev => prev.map((c, idx) => idx === index ? { ...c, status, engine: meta?.engine || activeEngine, profile: meta?.profile } : c));
       }
     );
 
     setIsSpeaking(false);
-    const baseEmotion = VoicePresets[preset as keyof typeof VoicePresets]?.baseEmotion || 'neutral';
+    const baseEmotion = VoicePresets[preset as keyof typeof VoicePresets]?.emotion || 'neutral';
     setCurrentEmotion(baseEmotion);
   };
 
   const handlePresetChange = (newPreset: VoicePreset) => {
     setPreset(newPreset);
-    const baseEmotion = VoicePresets[newPreset as keyof typeof VoicePresets]?.baseEmotion || 'neutral';
+    const baseEmotion = VoicePresets[newPreset as keyof typeof VoicePresets]?.emotion || 'neutral';
     setCurrentEmotion(baseEmotion);
     audioEngine.setConfig(newPreset, brandProfile, userName);
   };
@@ -237,7 +254,7 @@ const App: React.FC = () => {
           </div>
           <div className="flex flex-col">
             <h1 className="text-sm font-black tracking-tight text-white flex items-center gap-1">
-              AtlasAI <span className="text-[6px] font-mono bg-indigo-500/30 text-indigo-100 px-1 py-0.5 rounded-sm border border-indigo-500/20 uppercase tracking-tighter">v2.1</span>
+              AtlasAI <span className="text-[6px] font-mono bg-indigo-500/30 text-indigo-100 px-1 py-0.5 rounded-sm border border-indigo-500/20 uppercase tracking-tighter">v2.6</span>
             </h1>
             <div className="flex items-center gap-1 mt-[-1px]">
                <div className={`w-1 h-1 rounded-full ${isSpeaking ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-800'}`}></div>
@@ -267,6 +284,8 @@ const App: React.FC = () => {
         isSpeaking={isSpeaking}
         selectedPreset={preset}
       />
+
+      {isSpeaking && <VoiceSessionPanel audioChunks={audioChunks} />}
 
       <main className="flex-1 overflow-y-auto px-4 py-4 space-y-5 no-scrollbar relative z-10" ref={scrollRef}>
         {messages.length === 0 && !isHandsFree && (
@@ -360,7 +379,7 @@ const App: React.FC = () => {
             <div className="flex justify-between items-start">
               <div className="space-y-1">
                 <h3 className="text-base font-black text-white tracking-tighter uppercase">Calibration</h3>
-                <p className="text-[6px] text-zinc-600 font-bold uppercase tracking-[0.3em]">Node V2.2.0-Core</p>
+                <p className="text-[6px] text-zinc-600 font-bold uppercase tracking-[0.3em]">Node V2.6.0-Master</p>
               </div>
               <button onClick={() => setShowSettings(false)} className="p-1 rounded-full glass-dark text-zinc-500 hover:text-white transition-colors">&times;</button>
             </div>

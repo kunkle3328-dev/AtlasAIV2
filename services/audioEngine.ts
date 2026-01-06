@@ -1,12 +1,18 @@
-import { GoogleGenAI, LiveServerMessage, Modality, Blob } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { AudioEngineType, VoicePreset, BrandVoiceProfile } from '../types';
-import { decode, decodeAudioData, encode, sleep, injectProsody, chunkText } from '../utils/audioUtils';
+import { decode, decodeAudioData, encode, sleep, chunkText, injectProsody } from '../utils/audioUtils';
 import { higgsService } from './higgsService';
 import { LIVE_MODEL, VoicePresets } from '../constants/voicePresets';
+import { autoTuneByEmotion } from "../utils/emotionAutoTuner";
+import { loadVoiceMemory } from "./voiceMemoryService";
+import { detectNarrationMode } from "../utils/autoNarrator";
+import { resolvePersonaForDocument } from "./autoPersonaService";
+import { VoiceArchetypes } from "../voiceArchetypes";
 
 export interface ChunkMetadata {
   emotion: string;
   engine: AudioEngineType;
+  profile?: BrandVoiceProfile;
 }
 
 export class HybridAudioEngine {
@@ -24,7 +30,8 @@ export class HybridAudioEngine {
     timbre: 0,
     emphasis: 0.1,
     pause: 0,
-    breathiness: 0
+    breathiness: 0,
+    variability: 0.2
   };
   private activeSessionPromise: Promise<any> | null = null;
   private mediaStream: MediaStream | null = null;
@@ -32,18 +39,27 @@ export class HybridAudioEngine {
   
   public currentEmotion: string = 'neutral';
 
-  private initContexts() {
+  public async initContexts() {
     if (!this.outputAudioContext) {
       this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       this.outputNode = this.outputAudioContext.createGain();
+      this.outputNode.gain.value = 1.0;
       this.outputNode.connect(this.outputAudioContext.destination);
     }
+    
+    if (this.outputAudioContext.state === 'suspended') {
+      await this.outputAudioContext.resume();
+    }
+
     if (!this.inputAudioContext) {
       this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
     }
   }
 
   private analyzeEmotion(text: string, baseEmotion: string): string {
+    const narrationMode = detectNarrationMode(text);
+    if (narrationMode !== "neutral") return narrationMode;
+
     const lowerText = text.toLowerCase();
     if (/!|\bexcited\b|\bamazing\b|\bwow\b|\bgreat\b/i.test(lowerText)) return "excited";
     if (/\?|\bcurious\b|\bwonder\b|\breally\b/i.test(lowerText)) return "curious";
@@ -60,18 +76,65 @@ export class HybridAudioEngine {
     this.userName = userName;
   }
 
-  public getMergedPreset() {
-    const base = VoicePresets[this.currentPreset as keyof typeof VoicePresets] || VoicePresets.neutral;
-    return {
-      ...base,
-      rate: this.brandProfile.rate ?? base.rate,
-      pitch: this.brandProfile.pitch ?? base.pitch,
-      timbre: this.brandProfile.timbre ?? base.timbre,
-      emphasis: this.brandProfile.emphasis ?? base.emphasis,
-      pause: this.brandProfile.pause ?? base.pause,
-      breathiness: this.brandProfile.breathiness ?? base.breathiness,
-      baseEmotion: this.brandProfile.emotion || base.baseEmotion
+  /**
+   * Prosody Matrix Resolution Layer (v2.7 Patch)
+   * Preset -> Archetype -> Persona -> User Override
+   */
+  private resolveFinalVoiceProfile(textContext?: string, detectedEmotion?: string): BrandVoiceProfile {
+    const basePreset = VoicePresets[this.currentPreset as keyof typeof VoicePresets] || VoicePresets.neutral;
+    const voiceMemory = loadVoiceMemory();
+
+    // Start with the base preset as authority for structure
+    let matrix: any = {
+      tone: basePreset.tone,
+      rate: basePreset.rate,
+      pitch: basePreset.pitch,
+      timbre: basePreset.timbre,
+      emphasis: basePreset.emphasis,
+      pause: basePreset.pause,
+      breathiness: basePreset.breathiness,
+      emotion: basePreset.emotion,
+      variability: 0.2
     };
+
+    // Layer Archetype
+    if (this.brandProfile.archetype && (VoiceArchetypes as any)[this.brandProfile.archetype]) {
+      const arch = (VoiceArchetypes as any)[this.brandProfile.archetype];
+      Object.assign(matrix, arch);
+    }
+
+    // Apply Persona Switching logic if not manually pinned
+    if (!this.brandProfile.__manualOverride && textContext) {
+      const autoPersona = resolvePersonaForDocument(textContext);
+      if (autoPersona) {
+        Object.assign(matrix, autoPersona);
+      }
+    }
+
+    // Apply User Profile values (Individual manual control)
+    Object.entries(this.brandProfile).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && k !== 'archetype') {
+        matrix[k] = v;
+      }
+    });
+
+    // Final Voice Memory overrides (Global persistence)
+    if (voiceMemory?.enabled !== false && voiceMemory?.profileOverrides) {
+      Object.entries(voiceMemory.profileOverrides).forEach(([k, v]) => {
+        if (v !== null && v !== undefined) (matrix as any)[k] = v;
+      });
+    }
+
+    // Emotional Auto-tuning (Dynamic)
+    if (voiceMemory?.autoTuneEmotion !== false && detectedEmotion) {
+      matrix = autoTuneByEmotion(detectedEmotion, matrix);
+    }
+
+    return matrix;
+  }
+
+  public getMergedPreset() {
+    return this.resolveFinalVoiceProfile();
   }
 
   public async speakText(
@@ -79,189 +142,197 @@ export class HybridAudioEngine {
     onEngineSwitch: (engine: AudioEngineType) => void, 
     onChunkUpdate: (index: number, status: 'playing' | 'completed' | 'error', meta?: ChunkMetadata) => void
   ): Promise<void> {
+    await this.initContexts();
     const chunks = chunkText(fullText);
     for (let i = 0; i < chunks.length; i++) {
-      // Re-fetch merged preset every chunk to allow live parameter adjustment
-      const mergedPreset = this.getMergedPreset();
-      const dynamicEmotion = this.analyzeEmotion(chunks[i], mergedPreset.baseEmotion);
+      const initialPreset = VoicePresets[this.currentPreset as keyof typeof VoicePresets] || VoicePresets.neutral;
+      const dynamicEmotion = this.analyzeEmotion(chunks[i], initialPreset.emotion);
       const engine: AudioEngineType = this.isGeminiQuotaExceeded ? 'Studio Voice (Higgs)' : 'Gemini Live';
       
-      onChunkUpdate(i, 'playing', { emotion: dynamicEmotion, engine });
+      const profile = this.resolveFinalVoiceProfile(chunks[i], dynamicEmotion);
+      
+      onChunkUpdate(i, 'playing', { emotion: dynamicEmotion, engine, profile });
       
       try {
-        await this.speak(chunks[i], onEngineSwitch);
-        onChunkUpdate(i, 'completed', { emotion: dynamicEmotion, engine });
+        await this.speak(chunks[i], onEngineSwitch, dynamicEmotion);
+        onChunkUpdate(i, 'completed', { emotion: dynamicEmotion, engine, profile });
       } catch (err) {
-        onChunkUpdate(i, 'error', { emotion: dynamicEmotion, engine });
+        onChunkUpdate(i, 'error', { emotion: dynamicEmotion, engine, profile });
         console.error("Chunk synthesis error:", err);
       }
       
-      // Allow for semantic pausing if configured
-      if (mergedPreset.pause > 0) {
-        await sleep(mergedPreset.pause);
+      if (profile.pause > 0) {
+        await sleep(profile.pause);
       } else {
         await sleep(150);
       }
     }
-    this.currentEmotion = this.getMergedPreset().baseEmotion;
   }
 
-  public async speak(chunkText: string, onEngineSwitch: (engine: AudioEngineType) => void): Promise<void> {
-    const mergedPreset = this.getMergedPreset();
-    const dynamicEmotion = this.analyzeEmotion(chunkText, mergedPreset.baseEmotion);
-    this.currentEmotion = dynamicEmotion;
-    const prosodyChunk = injectProsody(chunkText, { ...mergedPreset, emotion: dynamicEmotion });
+  public async speak(text: string, onEngineSwitch: (engine: AudioEngineType) => void, emotion?: string): Promise<void> {
+    const engine: AudioEngineType = this.isGeminiQuotaExceeded ? 'Studio Voice (Higgs)' : 'Gemini Live';
+    onEngineSwitch(engine);
 
-    if (this.isGeminiQuotaExceeded) {
-      onEngineSwitch('Studio Voice (Higgs)');
-      await this.speakWithHiggs(prosodyChunk);
+    if (engine === 'Studio Voice (Higgs)') {
+      await higgsService.generateSpeech(text);
       return;
     }
 
     try {
-      onEngineSwitch('Gemini Live');
-      await this.speakWithGeminiLive(prosodyChunk, dynamicEmotion);
-    } catch (error: any) {
-      const errorMsg = error?.message || '';
-      if (error?.status === 429 || errorMsg.includes('RESOURCE_EXHAUSTED')) {
-        this.isGeminiQuotaExceeded = true;
+      const matrix = this.resolveFinalVoiceProfile(text, emotion);
+      const prosodyText = injectProsody(text, matrix);
+
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-tts',
+        contents: [{ parts: [{ text: prosodyText }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: 'Kore' },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio && this.outputAudioContext && this.outputNode) {
+        this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
+        const audioBuffer = await decodeAudioData(
+          decode(base64Audio),
+          this.outputAudioContext,
+          24000,
+          1,
+        );
+        const source = this.outputAudioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(this.outputNode);
+        source.addEventListener('ended', () => {
+          this.sources.delete(source);
+        });
+        source.start(this.nextStartTime);
+        this.nextStartTime += audioBuffer.duration;
+        this.sources.add(source);
+        
+        await sleep(audioBuffer.duration * 1000);
       }
-      onEngineSwitch('Studio Voice (Higgs)');
-      await this.speakWithHiggs(prosodyChunk);
+    } catch (err: any) {
+      if (err.message?.includes('429') || err.message?.includes('quota')) {
+        this.isGeminiQuotaExceeded = true;
+        return this.speak(text, onEngineSwitch, emotion);
+      }
+      throw err;
     }
   }
 
-  private async speakWithHiggs(text: string): Promise<void> {
-    await higgsService.generateSpeech(text);
-  }
-
-  private async speakWithGeminiLive(prosodyText: string, dynamicEmotion: string): Promise<void> {
-    this.initContexts();
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const instruction = `${this.getInstruction()} 
-    DYNAMIC STATE: Currently expressing with a ${dynamicEmotion} nuance.`;
-
-    const response = await ai.models.generateContent({
-      model: LIVE_MODEL,
-      contents: [{ parts: [{ text: `Synthesize this with ${dynamicEmotion} nuance: ${prosodyText}` }] }],
-      config: {
-        systemInstruction: instruction,
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: 'Puck' }
-          }
-        }
-      }
+  public stopAll() {
+    this.sources.forEach(source => {
+      try { source.stop(); } catch (e) {}
     });
-
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (base64Audio) {
-      await this.playAudioBytes(base64Audio);
+    this.sources.clear();
+    this.nextStartTime = 0;
+    
+    if (this.activeSessionPromise) {
+      this.activeSessionPromise.then(session => session.close()).catch(() => {});
+      this.activeSessionPromise = null;
+    }
+    
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(t => t.stop());
+      this.mediaStream = null;
     }
   }
 
   public async startLiveConversation(
-    onTranscription: (text: string, role: 'user' | 'assistant') => void,
-    onEngineStatus: (engine: AudioEngineType) => void
+    onTranscript: (text: string, role: 'user' | 'assistant') => void,
+    onEngineSwitch: (engine: AudioEngineType) => void
   ): Promise<void> {
-    this.initContexts();
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    
-    this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    
-    const instruction = `${this.getInstruction()} 
-    LIVE STREAM MODE: Keep responses brief, addressing ${this.userName || 'Client'} directly.`;
+    await this.initContexts();
+    if (!this.inputAudioContext || !this.outputAudioContext || !this.outputNode) return;
 
-    const sessionPromise = ai.live.connect({
+    this.stopAll();
+    onEngineSwitch('Gemini Live');
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    let currentInputTranscription = '';
+    let currentOutputTranscription = '';
+
+    this.activeSessionPromise = ai.live.connect({
       model: LIVE_MODEL,
-      config: {
-        responseModalities: [Modality.AUDIO],
-        systemInstruction: instruction,
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } }
-        },
-        inputAudioTranscription: {},
-        outputAudioTranscription: {}
-      },
       callbacks: {
         onopen: () => {
-          onEngineStatus('Gemini Live');
           const source = this.inputAudioContext!.createMediaStreamSource(this.mediaStream!);
-          const scriptProcessor = this.inputAudioContext!.createScriptProcessor(1024, 1, 1);
+          const scriptProcessor = this.inputAudioContext!.createScriptProcessor(4096, 1, 1);
           scriptProcessor.onaudioprocess = (e) => {
             const inputData = e.inputBuffer.getChannelData(0);
-            const pcmBlob = this.createBlob(inputData);
-            sessionPromise.then(session => session.sendRealtimeInput({ media: pcmBlob }));
+            const l = inputData.length;
+            const int16 = new Int16Array(l);
+            for (let i = 0; i < l; i++) int16[i] = inputData[i] * 32768;
+            
+            this.activeSessionPromise?.then(session => {
+              session.sendRealtimeInput({ 
+                media: {
+                  data: encode(new Uint8Array(int16.buffer)),
+                  mimeType: 'audio/pcm;rate=16000'
+                }
+              });
+            });
           };
           source.connect(scriptProcessor);
           scriptProcessor.connect(this.inputAudioContext!.destination);
         },
         onmessage: async (message: LiveServerMessage) => {
-          if (message.serverContent?.inputTranscription?.text) onTranscription(message.serverContent.inputTranscription.text, 'user');
-          if (message.serverContent?.outputTranscription?.text) onTranscription(message.serverContent.outputTranscription.text, 'assistant');
-          const parts = message.serverContent?.modelTurn?.parts || [];
-          for (const part of parts) {
-            if (part.inlineData?.data) await this.playAudioBytes(part.inlineData.data);
+          const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+          if (base64Audio && this.outputAudioContext && this.outputNode) {
+            this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
+            const audioBuffer = await decodeAudioData(decode(base64Audio), this.outputAudioContext, 24000, 1);
+            const source = this.outputAudioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(this.outputNode);
+            source.addEventListener('ended', () => this.sources.delete(source));
+            source.start(this.nextStartTime);
+            this.nextStartTime += audioBuffer.duration;
+            this.sources.add(source);
           }
-          if (message.serverContent?.interrupted) this.stopPlayback();
+
+          if (message.serverContent?.interrupted) {
+            this.sources.forEach(s => { try { s.stop(); } catch(e){} });
+            this.sources.clear();
+            this.nextStartTime = 0;
+          }
+
+          if (message.serverContent?.inputTranscription) {
+            currentInputTranscription += message.serverContent.inputTranscription.text;
+          }
+          if (message.serverContent?.outputTranscription) {
+            currentOutputTranscription += message.serverContent.outputTranscription.text;
+          }
+
+          if (message.serverContent?.turnComplete) {
+            if (currentInputTranscription) onTranscript(currentInputTranscription, 'user');
+            if (currentOutputTranscription) onTranscript(currentOutputTranscription, 'assistant');
+            currentInputTranscription = '';
+            currentOutputTranscription = '';
+          }
         },
-        onerror: (e) => onEngineStatus('Studio Voice (Higgs)'),
-        onclose: () => {
-          this.currentEmotion = 'neutral';
+        onerror: (e) => console.error("Live session error:", e),
+        onclose: () => console.log("Live session closed")
+      },
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } }
         },
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        systemInstruction: `You are AtlasAI v2.6. Respond as a concierge for ${this.userName}.`
       }
     });
-    this.activeSessionPromise = sessionPromise;
-  }
 
-  private getInstruction() {
-    const mergedPreset = this.getMergedPreset();
-    const targetName = this.userName || 'Client';
-    return `You are AtlasAI, an elite knowledge concierge. 
-    USER IDENTITY: Your client's name is ${targetName}. You must ALWAYS refer to them as ${targetName} throughout the conversation.
-    FOUNDATIONAL VOCAL STAMP:
-    - Pitch: ${mergedPreset.pitch}, Rate: ${mergedPreset.rate}, Timbre: ${mergedPreset.timbre}, Emotion: ${mergedPreset.baseEmotion}, Emphasis: ${mergedPreset.emphasis}, Breathiness: ${mergedPreset.breathiness}, Pause: ${mergedPreset.pause}ms
-    Synthesize audio using highly realistic, human cadences. Adaptive prosody is mandatory.`;
-  }
-
-  private createBlob(data: Float32Array): Blob {
-    const int16 = new Int16Array(data.length);
-    for (let i = 0; i < data.length; i++) int16[i] = data[i] * 32768;
-    return { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
-  }
-
-  private async playAudioBytes(base64: string) {
-    if (!this.outputAudioContext || !this.outputNode) return;
-    this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
-    const audioBuffer = await decodeAudioData(decode(base64), this.outputAudioContext, 24000, 1);
-    const source = this.outputAudioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.outputNode);
-    source.addEventListener('ended', () => this.sources.delete(source));
-    source.start(this.nextStartTime);
-    this.nextStartTime += audioBuffer.duration;
-    this.sources.add(source);
-  }
-
-  private stopPlayback() {
-    for (const source of this.sources) try { source.stop(); } catch(e) {}
-    this.sources.clear();
-    this.nextStartTime = 0;
-    this.currentEmotion = 'neutral';
-  }
-
-  public stopAll() {
-    this.stopPlayback();
-    if (this.activeSessionPromise) {
-      this.activeSessionPromise.then(s => s.close());
-      this.activeSessionPromise = null;
-    }
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(track => track.stop());
-      this.mediaStream = null;
-    }
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    await this.activeSessionPromise;
   }
 }
 

@@ -1,3 +1,4 @@
+
 import React from "react";
 import { VoicePresets } from "../constants/voicePresets";
 import { VoicePreset } from "../types";
@@ -15,7 +16,7 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
   isSpeaking,
   selectedPreset 
 }) => {
-  const activeEmotion = currentEmotion || VoicePresets[selectedPreset as keyof typeof VoicePresets]?.baseEmotion || 'neutral';
+  const activeEmotion = currentEmotion || VoicePresets[selectedPreset as keyof typeof VoicePresets]?.emotion || 'neutral';
 
   return (
     <div className="mx-4 mt-2 mb-4 p-4 rounded-[1.5rem] glass-premium pearlescent border border-white/20 shadow-xl flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-500">

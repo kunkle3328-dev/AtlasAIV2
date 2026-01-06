@@ -1,4 +1,3 @@
-
 export enum VoicePreset {
   NEUTRAL = 'neutral',
   WARM = 'warm',
@@ -19,7 +18,10 @@ export interface BrandVoiceProfile {
   emphasis: number;
   pause: number;
   breathiness: number;
+  variability?: number;
+  archetype?: string;
   emotion?: string;
+  __manualOverride?: boolean;
 }
 
 export type AudioEngineType = 'Gemini Live' | 'Studio Voice (Higgs)';
@@ -29,6 +31,7 @@ export interface AudioChunk {
   text: string;
   status: 'pending' | 'processing' | 'playing' | 'completed' | 'error';
   engine: AudioEngineType;
+  profile?: BrandVoiceProfile;
 }
 
 export interface Message {
