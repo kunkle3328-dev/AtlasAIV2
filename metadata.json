@@ -1,0 +1,7 @@
+{
+  "name": "AtlasAI v2",
+  "description": "A high-fidelity AI knowledge concierge featuring real-time Gemini Live audio with semantic chunking and enterprise fallback narration.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
