@@ -11,6 +11,48 @@ import { Icons, GEMINI_MODEL, VoicePresets } from './constants';
 import { chunkText, sleep } from './utils/audioUtils';
 import { audioEngine } from './services/audioEngine';
 
+/**
+ * Premium Hint Component
+ * Provides detailed, high-fidelity context for system calibration.
+ */
+const SystemHint: React.FC<{ title: string; text: string }> = ({ title, text }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <div className="inline-block ml-1.5 align-middle">
+      <button 
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(!isOpen);
+        }}
+        className={`w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-black transition-all duration-300 ${
+          isOpen 
+            ? 'bg-indigo-500 border-indigo-400 text-white shadow-[0_0_10px_rgba(99,102,241,0.5)]' 
+            : 'border-white/10 text-zinc-600 hover:text-zinc-400 hover:border-white/20'
+        }`}
+      >
+        ?
+      </button>
+      {isOpen && (
+        <div className="absolute left-8 right-8 mt-3 p-4 glass-premium pearlescent border border-white/20 rounded-2xl z-[120] animate-in fade-in slide-in-from-top-2 shadow-2xl backdrop-blur-3xl">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{title}</span>
+            <p className="text-[11px] text-zinc-200 font-semibold leading-relaxed tracking-tight">
+              {text}
+            </p>
+          </div>
+          <button 
+            onClick={() => setIsOpen(false)}
+            className="mt-3 text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] hover:text-white transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -54,34 +96,27 @@ const App: React.FC = () => {
           (text, role) => {
             setMessages(prev => {
               const lastMsg = prev[prev.length - 1];
-              // Smarter merging logic to fix "sear ch" word splitting
-              if (lastMsg && lastMsg.role === role && Date.now() - lastMsg.timestamp < 3500) {
+              // OPTIMIZED: Append tokens directly. The API sends delta strings.
+              // Direct concatenation prevents artificial spaces inside words.
+              if (lastMsg && lastMsg.role === role && Date.now() - lastMsg.timestamp < 3000) {
                 const updated = [...prev];
-                const lastContent = lastMsg.content;
-                const newText = text;
-                
-                // Logic: Only add a space if both the existing text ends in a word char 
-                // AND the new text starts with a word char.
-                // Also ensures we don't double space.
-                const lastChar = lastContent.slice(-1);
-                const firstChar = newText.charAt(0);
-                const needsSpace = /[a-zA-Z0-9]/.test(lastChar) && /[a-zA-Z0-9]/.test(firstChar);
-                
-                const merged = needsSpace ? `${lastContent} ${newText}` : `${lastContent}${newText}`;
+                const rawCombined = lastMsg.content + text;
+                // Clean extra whitespace but preserve single word separation.
+                const cleanedContent = rawCombined.replace(/\s{2,}/g, ' '); 
                 
                 updated[updated.length - 1] = { 
                   ...lastMsg, 
-                  content: merged.replace(/\s+/g, ' ') 
+                  content: cleanedContent 
                 };
                 return updated;
               }
-              return [...prev, { id: `${role}-${Date.now()}`, role, content: text, timestamp: Date.now() }];
+              return [...prev, { id: `${role}-${Date.now()}`, role, content: text.trimStart(), timestamp: Date.now() }];
             });
           },
           (engine) => setActiveEngine(engine)
         );
       } catch (err) {
-        console.error("Link error:", err);
+        console.error("Link failure:", err);
         setIsHandsFree(false);
         setIsSpeaking(false);
       }
@@ -109,7 +144,7 @@ const App: React.FC = () => {
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-      const systemInstruction = `You are AtlasAI v2.1. Deliver elite concierge services. Respond with precision, depth, and context. Be concise (2-4 sentences). User name: ${userName || 'client'}.`;
+      const systemInstruction = `You are AtlasAI v2.1. Deliver elite concierge services. Respond with precision. User name: ${userName || 'client'}.`;
       
       const response = await ai.models.generateContent({
         model: GEMINI_MODEL,
@@ -177,70 +212,64 @@ const App: React.FC = () => {
         <div className="absolute bottom-[-15%] left-[-10%] w-full h-1/2 bg-violet-600/5 rounded-full blur-[120px]"></div>
       </div>
 
-      {/* Header - Shrunk for Mobile */}
-      <header className="flex items-center justify-between px-4 pb-4 glass z-50 rounded-b-[2rem] safe-area-pt border-b border-white/10 shadow-lg">
-        <div className="flex items-center gap-2.5">
+      <header className="flex items-center justify-between px-3 pb-3 glass z-50 rounded-b-[1.5rem] safe-area-pt border-b border-white/10 shadow-lg">
+        <div className="flex items-center gap-2">
           <div className="relative">
-            <div className="absolute inset-0 bg-indigo-500 blur-lg opacity-30"></div>
-            <div className="relative w-9 h-9 bg-gradient-to-br from-indigo-500 via-indigo-700 to-indigo-950 rounded-xl flex items-center justify-center border border-white/10">
-              <span className="font-extrabold text-white text-lg tracking-tighter">A</span>
+            <div className="absolute inset-0 bg-indigo-500 blur-md opacity-25"></div>
+            <div className="relative w-8 h-8 bg-gradient-to-br from-indigo-500 via-indigo-700 to-indigo-950 rounded-lg flex items-center justify-center border border-white/10">
+              <span className="font-extrabold text-white text-base tracking-tighter">A</span>
             </div>
           </div>
           <div className="flex flex-col">
-            <h1 className="text-base font-black tracking-tight text-white flex items-center gap-1.5">
-              AtlasAI <span className="text-[7px] font-mono bg-indigo-500/40 text-indigo-100 px-1.5 py-0.5 rounded-md border border-indigo-500/20 uppercase tracking-tighter">v2.1</span>
+            <h1 className="text-sm font-black tracking-tight text-white flex items-center gap-1">
+              AtlasAI <span className="text-[6px] font-mono bg-indigo-500/30 text-indigo-100 px-1 py-0.5 rounded-sm border border-indigo-500/20 uppercase tracking-tighter">v2.1</span>
             </h1>
-            <div className="flex items-center gap-1.5 mt-0">
-               <div className={`w-1 h-1 rounded-full ${isSpeaking ? 'bg-emerald-400 animate-pulse glow-indigo' : 'bg-zinc-800'}`}></div>
-               <span className="text-[7px] uppercase tracking-[0.3em] text-zinc-500 font-black">
+            <div className="flex items-center gap-1 mt-[-1px]">
+               <div className={`w-1 h-1 rounded-full ${isSpeaking ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-800'}`}></div>
+               <span className="text-[6px] uppercase tracking-[0.25em] text-zinc-500 font-black">
                  {isSpeaking ? (isHandsFree ? `STREAM` : `LINK`) : 'READY'}
                </span>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <button onClick={toggleHandsFree} className={`p-2 rounded-xl btn-premium border shadow-lg ${isHandsFree ? 'bg-red-600 text-white border-red-400 glow-red' : 'glass-dark text-zinc-300 border-white/10'}`}>
-            {isHandsFree ? <Icons.MicOff className="w-4.5 h-4.5" /> : <Icons.Mic className="w-4.5 h-4.5" />}
+        <div className="flex items-center gap-1">
+          <button onClick={toggleHandsFree} className={`p-1.5 rounded-lg btn-premium border ${isHandsFree ? 'bg-red-600 text-white border-red-400' : 'glass-dark text-zinc-400 border-white/10'}`}>
+            {isHandsFree ? <Icons.MicOff className="w-4 h-4" /> : <Icons.Mic className="w-4 h-4" />}
           </button>
-          <button onClick={() => setShowSettings(true)} className="p-2 rounded-xl glass-dark btn-premium text-zinc-300 border border-white/10 shadow-lg">
-            <Icons.Settings className="w-4.5 h-4.5" />
+          <button onClick={() => setShowSettings(true)} className="p-1.5 rounded-lg glass-dark btn-premium text-zinc-400 border border-white/10">
+            <Icons.Settings className="w-4 h-4" />
           </button>
         </div>
       </header>
 
-      {/* Main Content Area - Shrunk for Mobile */}
-      <main className="flex-1 overflow-y-auto px-4 py-6 space-y-8 no-scrollbar relative z-10" ref={scrollRef}>
+      <main className="flex-1 overflow-y-auto px-4 py-5 space-y-6 no-scrollbar relative z-10" ref={scrollRef}>
         {messages.length === 0 && !isHandsFree && (
-          <div className="h-full flex flex-col items-center justify-center text-center space-y-8 pb-20 animate-in fade-in duration-1000">
-            <div className="relative">
-              <div className="absolute inset-[-40px] bg-indigo-500 blur-[80px] opacity-10"></div>
-              <div className="relative w-24 h-24 glass-premium rounded-[2rem] flex items-center justify-center shadow-xl border border-white/10 group overflow-hidden">
-                 <div className="scanner-line !h-0.5 opacity-30"></div>
-                 <Icons.Mic className="w-10 h-10 text-indigo-500/40" />
-              </div>
+          <div className="h-full flex flex-col items-center justify-center text-center space-y-6 pb-20 animate-in fade-in">
+            <div className="relative w-20 h-20 glass-premium rounded-[1.8rem] flex items-center justify-center shadow-lg border border-white/10">
+               <Icons.Mic className="w-8 h-8 text-indigo-500/40" />
             </div>
-            <div className="space-y-3 px-4">
-              <h2 className="text-2xl font-black tracking-tight text-white leading-none text-gradient uppercase">Neural<br/>Concierge.</h2>
-              <p className="text-[8px] text-zinc-600 max-w-[200px] mx-auto leading-relaxed font-black uppercase tracking-[0.4em] opacity-80">Sync established / identity verified</p>
+            <div className="space-y-2 px-4">
+              <h2 className="text-xl font-black tracking-tight text-white leading-none text-gradient uppercase">Neural Concierge.</h2>
+              <p className="text-[7px] text-zinc-600 uppercase tracking-[0.4em]">Ready / {userName || 'Client'}</p>
             </div>
           </div>
         )}
 
         {messages.map((msg) => (
-          <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-4 duration-500`}>
-            <div className={`max-w-[85%] px-4 py-3.5 rounded-[1.5rem] text-[14px] font-semibold leading-[1.55] shadow-lg border tracking-tight ${
+          <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2`}>
+            <div className={`max-w-[85%] px-3.5 py-2.5 rounded-[1.2rem] text-[13px] font-bold leading-[1.5] shadow-md border tracking-tight ${
               msg.role === 'user' 
-                ? 'bg-[#0a0a0a] border-white/5 text-zinc-200 rounded-tr-none shadow-inner' 
-                : 'glass-premium pearlescent border-white/20 text-white rounded-tl-none border-l-2 border-l-indigo-400'
+                ? 'bg-[#0a0a0a] border-white/5 text-zinc-300 rounded-tr-none' 
+                : 'glass-premium pearlescent border-white/20 text-white rounded-tl-none border-l-2 border-l-indigo-500'
             }`}>
               {msg.content}
             </div>
-            <div className="flex items-center gap-2 mt-2 px-2">
-              <span className="text-[8px] font-mono font-bold uppercase tracking-[0.2em] flex items-center gap-2">
-                <span className={msg.role === 'assistant' ? 'text-indigo-400' : 'text-zinc-500'}>
-                  {msg.role === 'assistant' ? 'AI NODE' : `${userName || 'USER'}`}
+            <div className="flex items-center gap-1.5 mt-1.5 px-2">
+              <span className="text-[7px] font-mono font-bold uppercase tracking-[0.15em] flex items-center gap-1.5">
+                <span className={msg.role === 'assistant' ? 'text-indigo-500' : 'text-zinc-600'}>
+                  {msg.role === 'assistant' ? 'AI' : `${userName || 'USER'}`}
                 </span>
-                <span className="text-zinc-800">/</span>
+                <span className="text-zinc-800">•</span>
                 <span className="text-zinc-700">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               </span>
             </div>
@@ -248,152 +277,128 @@ const App: React.FC = () => {
         ))}
 
         {isThinking && (
-          <div className="flex items-center gap-3 animate-in fade-in duration-300 px-1">
-            <div className="relative w-8 h-8 glass-dark rounded-lg flex items-center justify-center border border-white/10">
-              <div className="w-3 h-3 border-[1.5px] border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
+          <div className="flex items-center gap-2 animate-in fade-in duration-300 px-1">
+            <div className="w-6 h-6 glass-dark rounded-md flex items-center justify-center border border-white/10">
+              <div className="w-2 h-2 border-[1.5px] border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
             </div>
-            <span className="text-[8px] text-zinc-500 font-black uppercase tracking-[0.4em]">Neural Pathing...</span>
+            <span className="text-[7px] text-zinc-600 font-black uppercase tracking-[0.3em]">Processing...</span>
           </div>
         )}
 
-        <div className="h-32"></div>
+        <div className="h-24"></div>
       </main>
 
-      {/* Floating UI - Shrunk */}
-      {audioChunks.length > 0 && isSpeaking && !isHandsFree && (
-        <div className="absolute bottom-24 left-4 right-4 z-40 animate-in slide-in-from-bottom-8">
-          <div className="glass-premium pearlescent rounded-[1.5rem] p-4 border border-white/25 flex flex-col gap-3 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="relative flex items-center justify-center w-3 h-3">
-                  <div className="absolute inset-0 bg-indigo-500 rounded-full animate-ping opacity-30"></div>
-                  <div className="relative w-1.5 h-1.5 bg-indigo-500 rounded-full glow-indigo"></div>
-                </div>
-                <span className="text-[8px] font-black text-white uppercase tracking-[0.2em]">{activeEngine}</span>
-              </div>
-              <button onClick={handleStop} className="p-1.5 glass-dark rounded-full btn-premium border border-white/20">
-                <Icons.Stop className="w-3.5 h-3.5 text-red-500" />
-              </button>
-            </div>
-            <div className="flex gap-1 h-1 px-0.5">
-              {audioChunks.map((c) => (
-                <div key={c.id} className={`flex-1 rounded-full transition-all duration-700 ${
-                    c.status === 'completed' ? 'bg-indigo-500/10' : 
-                    c.status === 'playing' ? 'bg-indigo-500 scale-y-[1.8] glow-indigo' : 
-                    'bg-zinc-900'
-                  }`}
-                ></div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Hands-Free - Shrunk */}
-      {isHandsFree && (
-        <div className="absolute inset-0 z-[60] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center p-6 safe-area-pb animate-in fade-in">
-           <div className="relative w-full max-w-xs aspect-square flex items-center justify-center scale-75">
-              <div className="absolute inset-8 border border-white/5 rounded-full animate-orbit"></div>
-              <div className="relative w-48 h-48 glass-premium pearlescent rounded-full flex items-center justify-center shadow-xl border-white/20">
-                 <div className="flex gap-1.5 items-end h-20 mb-3">
-                   {[...Array(10)].map((_, i) => (
-                     <div key={i} className="w-1.5 bg-indigo-500 rounded-full glow-indigo" 
-                       style={{ height: `${30 + Math.random() * 70}%`, animation: `wave 0.5s ease-in-out infinite`, animationDelay: `${i * 0.1}s` }}
-                     ></div>
-                   ))}
-                 </div>
-              </div>
-           </div>
-           <div className="mt-8 text-center space-y-3">
-              <h3 className="text-2xl font-black text-white tracking-tighter text-gradient uppercase">Neural Aura</h3>
-              <p className="text-[8px] text-indigo-400 uppercase font-black tracking-[0.5em] animate-pulse">Session active / hands-free</p>
-           </div>
-           <div className="absolute bottom-12 left-6 right-6">
-              <button onClick={toggleHandsFree} className="w-full py-5 bg-red-600/90 text-white rounded-[2rem] text-[10px] font-black uppercase tracking-[0.5em] btn-premium shadow-lg">
-                Terminate Link
-              </button>
-           </div>
-        </div>
-      )}
-
-      {/* Input Module - Shrunk for Mobile */}
       {!isHandsFree && (
-        <div className="absolute bottom-0 inset-x-0 glass z-50 px-4 pt-4 pb-6 rounded-t-[2rem] safe-area-pb border-t border-white/10">
+        <div className="absolute bottom-0 inset-x-0 glass z-50 px-3 pt-3 pb-5 rounded-t-[1.5rem] safe-area-pb border-t border-white/10">
           <form onSubmit={handleSend} className="relative flex items-center gap-2">
             <div className="relative flex-1">
-              <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Request synthesis...`}
-                className="w-full bg-[#0a0a0a]/60 border border-white/10 rounded-[1.5rem] px-5 py-3.5 text-[14px] font-bold outline-none focus:border-indigo-500/40 text-white"
+              <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Request...`}
+                className="w-full bg-[#0a0a0a]/60 border border-white/10 rounded-[1.2rem] px-4 py-2.5 text-[13px] font-bold outline-none text-white focus:border-indigo-500/30"
               />
             </div>
             <button type="submit" disabled={!input.trim() || isThinking}
-              className={`p-3.5 rounded-full btn-premium border ${!input.trim() || isThinking ? 'bg-zinc-950 border-white/5 text-zinc-900' : 'bg-indigo-600 border-indigo-400 text-white shadow-lg'}`}
+              className={`p-2.5 rounded-full border ${!input.trim() || isThinking ? 'bg-zinc-950 border-white/5 text-zinc-900' : 'bg-indigo-600 border-indigo-400 text-white shadow-lg'}`}
             >
-              <Icons.Send className="w-5 h-5" />
+              <Icons.Send className="w-4 h-4" />
             </button>
           </form>
         </div>
       )}
 
-      {/* Settings Panel - Detailed Hints */}
+      {isHandsFree && (
+        <div className="absolute inset-0 z-[60] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center p-6 safe-area-pb animate-in fade-in">
+           <div className="relative w-48 h-48 glass-premium pearlescent rounded-full flex items-center justify-center shadow-xl border-white/20 scale-90">
+              <div className="flex gap-1 items-end h-16 mb-2">
+                {[...Array(8)].map((_, i) => (
+                  <div key={i} className="w-1 bg-indigo-500 rounded-full" 
+                    style={{ height: `${30 + Math.random() * 70}%`, animation: `wave 0.5s ease-in-out infinite`, animationDelay: `${i * 0.12}s` }}
+                  ></div>
+                ))}
+              </div>
+           </div>
+           <div className="mt-6 text-center space-y-2">
+              <h3 className="text-xl font-black text-white tracking-tighter uppercase">Neural Aura</h3>
+              <p className="text-[7px] text-indigo-400 uppercase tracking-[0.4em] animate-pulse">Session Active</p>
+           </div>
+           <div className="absolute bottom-10 left-6 right-6">
+              <button onClick={toggleHandsFree} className="w-full py-4 bg-red-600/90 text-white rounded-[1.5rem] text-[9px] font-black uppercase tracking-[0.4em] shadow-lg">
+                Disconnect
+              </button>
+           </div>
+        </div>
+      )}
+
       {showSettings && (
-        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-3xl flex items-end justify-center animate-in fade-in" onClick={() => setShowSettings(false)}>
-          <div className="glass-premium pearlescent w-full max-w-lg rounded-t-[2.5rem] p-8 space-y-8 animate-in slide-in-from-bottom-20 overflow-y-auto no-scrollbar max-h-[90vh] border-t border-white/20 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-3xl flex items-end justify-center animate-in fade-in" onClick={() => setShowSettings(false)}>
+          <div className="glass-premium pearlescent w-full max-w-lg rounded-t-[2rem] p-6 space-y-6 animate-in slide-in-from-bottom-20 overflow-y-auto no-scrollbar max-h-[85vh] border-t border-white/20" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-start">
               <div className="space-y-1">
-                <h3 className="text-2xl font-black text-white tracking-tighter text-gradient uppercase">Calibration</h3>
-                <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-[0.4em]">Link Control v2.1.0</p>
+                <h3 className="text-lg font-black text-white tracking-tighter uppercase">Calibration</h3>
+                <p className="text-[7px] text-zinc-600 font-bold uppercase tracking-[0.3em]">Node Control v2.1.0</p>
               </div>
-              <button onClick={() => setShowSettings(false)} className="p-2 rounded-full glass-dark text-zinc-400 border border-white/10 hover:text-white">&times;</button>
+              <button onClick={() => setShowSettings(false)} className="p-1.5 rounded-full glass-dark text-zinc-500 hover:text-white transition-colors">&times;</button>
             </div>
 
-            <div className="space-y-8 pb-10">
-              <section className="space-y-3">
-                <div className="px-1 space-y-1">
-                  <label className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em]">Identity Link</label>
-                  <p className="text-[7px] text-zinc-700 font-bold uppercase tracking-widest italic leading-tight">Authenticates your personal profile for a more humanized bimodal experience.</p>
+            <div className="space-y-6 pb-6 relative">
+              
+              {/* Identity Calibration */}
+              <section className="space-y-2.5">
+                <div className="flex items-center px-1">
+                  <label className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.2em]">Identity Link</label>
+                  <SystemHint 
+                    title="User Identification" 
+                    text="Synchronizes your chosen identifier with the LLM's context window. This allows the concierge to refer to you by name during vocal turns, enhancing the personalization layer of the bimodal experience." 
+                  />
                 </div>
-                <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="Personal ID..."
-                   className="w-full bg-[#050505]/60 border border-white/10 rounded-[1.2rem] py-4 px-6 text-white text-[13px] font-black placeholder:text-zinc-900 outline-none"
+                <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="Access Name..."
+                   className="w-full bg-[#050505]/60 border border-white/10 rounded-[1rem] py-3.5 px-5 text-white text-[12px] font-black outline-none focus:border-indigo-500/30 transition-all"
                 />
               </section>
 
-              <section className="space-y-4">
-                <div className="px-1 space-y-1">
-                  <label className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em]">Behavioral Core</label>
-                  <p className="text-[7px] text-zinc-700 font-bold uppercase tracking-widest italic leading-tight">Configures the underlying linguistic and empathetic processing archetype.</p>
+              {/* Behavioral Archetype */}
+              <section className="space-y-3">
+                <div className="flex items-center px-1">
+                  <label className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.2em]">Behavioral Core</label>
+                  <SystemHint 
+                    title="Persona Archetype" 
+                    text="Modulates the fundamental persona logic. Each preset recalibrates the model's vocabulary complexity, empathy weighting, and response length to match the selected archetype's conversational goals." 
+                  />
                 </div>
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-2 gap-2">
                   {Object.values(VoicePreset).map((p, idx, arr) => (
                     <button key={p} onClick={() => setPreset(p)}
-                      className={`px-3 py-3 rounded-[1.2rem] text-[10px] font-black border uppercase tracking-[0.1em] transition-all relative overflow-hidden ${
-                        preset === p ? 'bg-indigo-600 border-indigo-400 text-white scale-105' : 'glass-dark border-white/10 text-zinc-600'
+                      className={`px-2 py-2.5 rounded-[0.8rem] text-[9px] font-black border uppercase tracking-[0.1em] transition-all relative overflow-hidden ${
+                        preset === p ? 'bg-indigo-600 border-indigo-400 text-white scale-105 z-10 shadow-lg' : 'glass-dark border-white/10 text-zinc-600'
                       } ${idx === arr.length - 1 ? 'col-span-2' : ''}`}
                     >
                       {p}
                     </button>
                   ))}
                 </div>
-                <div className="bg-white/[0.01] border border-white/5 rounded-[1.5rem] p-4">
-                   <p className="text-[9px] text-zinc-500 leading-relaxed font-bold">
-                     <span className="text-indigo-500/60 mr-2 uppercase">Core Status:</span>
-                     {VoicePresets[preset as keyof typeof VoicePresets]}
-                   </p>
-                </div>
               </section>
 
-              <section className="space-y-5">
-                <div className="px-1 space-y-1">
-                  <label className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em]">Aura Calibration</label>
-                  <p className="text-[7px] text-zinc-700 font-bold uppercase tracking-widest italic leading-tight">Fine-tunes the rhythmic prosody and affective intensity of output turns.</p>
+              {/* Aura Modulation Matrix */}
+              <section className="space-y-4">
+                <div className="flex items-center px-1">
+                  <label className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.2em]">Aura Modulation</label>
+                  <SystemHint 
+                    title="Vocal Prosody Matrix" 
+                    text="Adjusts the emotive cadence and prosodic intensity of the speech engine. These parameters influence the pitch variance, syllable duration, and rhythmic emphasis of synthesized output." 
+                  />
                 </div>
-                <div className="glass-dark p-5 rounded-[2rem] space-y-6 border border-white/10">
-                  <div className="space-y-3">
-                    <span className="text-[8px] text-zinc-600 font-black uppercase tracking-[0.2em] block px-1">Tone Matrix</span>
-                    <div className="grid grid-cols-3 gap-2">
+                <div className="glass-dark p-5 rounded-[1.2rem] space-y-5 border border-white/10 shadow-inner">
+                  
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[7px] text-zinc-600 font-black uppercase tracking-[0.15em]">Tone Profile</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
                       {['friendly', 'formal', 'authoritative'].map((t: any) => (
                         <button key={t} onClick={() => setBrandProfile({...brandProfile, tone: t})}
-                          className={`py-2.5 rounded-lg text-[7px] font-black uppercase tracking-tight border shadow-sm ${
-                            brandProfile.tone === t ? 'bg-white text-black border-white scale-110' : 'bg-black/40 text-zinc-700 border-white/5'
+                          className={`py-2 rounded-md text-[7px] font-black uppercase tracking-tight border transition-all ${
+                            brandProfile.tone === t 
+                              ? 'bg-white text-black border-white shadow-xl scale-110' 
+                              : 'bg-black/40 text-zinc-700 border-white/5'
                           }`}
                         >
                           {t}
@@ -401,31 +406,40 @@ const App: React.FC = () => {
                       ))}
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 gap-4">
+
+                  <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-2">
-                      <span className="text-[8px] text-zinc-600 font-black uppercase tracking-[0.2em] px-1">Pacing Protocol</span>
-                      <select value={brandProfile.pacing} onChange={(e) => setBrandProfile({...brandProfile, pacing: e.target.value as any})}
-                        className="w-full bg-black/60 border border-white/10 rounded-[1rem] py-3.5 px-4 text-[9px] font-black uppercase tracking-widest text-zinc-300 outline-none"
-                      >
-                        <option value="measured">Measured (Default)</option>
-                        <option value="fast">Dynamic (Rapid)</option>
-                      </select>
+                      <span className="text-[7px] text-zinc-600 font-black uppercase tracking-[0.15em] px-1">Pacing Protocol</span>
+                      <div className="relative">
+                        <select value={brandProfile.pacing} onChange={(e) => setBrandProfile({...brandProfile, pacing: e.target.value as any})}
+                          className="w-full bg-black/60 border border-white/10 rounded-[0.8rem] py-2.5 px-3 text-[8px] font-black uppercase tracking-widest text-zinc-300 outline-none appearance-none"
+                        >
+                          <option value="measured">Measured (Refined)</option>
+                          <option value="fast">Dynamic (Rapid)</option>
+                        </select>
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-700 text-[10px]">▼</div>
+                      </div>
                     </div>
+                    
                     <div className="space-y-2">
-                      <span className="text-[8px] text-zinc-600 font-black uppercase tracking-[0.2em] px-1">Prosody Focus</span>
-                      <select value={brandProfile.emphasisStyle} onChange={(e) => setBrandProfile({...brandProfile, emphasisStyle: e.target.value as any})}
-                        className="w-full bg-black/60 border border-white/10 rounded-[1rem] py-3.5 px-4 text-[9px] font-black uppercase tracking-widest text-zinc-300 outline-none"
-                      >
-                        <option value="subtle">Refined (Subtle)</option>
-                        <option value="assertive">Assertive (Impact)</option>
-                      </select>
+                      <span className="text-[7px] text-zinc-600 font-black uppercase tracking-[0.15em] px-1">Prosody Focus</span>
+                      <div className="relative">
+                        <select value={brandProfile.emphasisStyle} onChange={(e) => setBrandProfile({...brandProfile, emphasisStyle: e.target.value as any})}
+                          className="w-full bg-black/60 border border-white/10 rounded-[0.8rem] py-2.5 px-3 text-[8px] font-black uppercase tracking-widest text-zinc-300 outline-none appearance-none"
+                        >
+                          <option value="subtle">Refined (Subtle)</option>
+                          <option value="assertive">Assertive (Impact)</option>
+                        </select>
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-700 text-[10px]">▼</div>
+                      </div>
                     </div>
                   </div>
+
                 </div>
               </section>
 
-              <button onClick={() => setShowSettings(false)} className="w-full py-6 bg-indigo-600 text-white rounded-[2rem] text-[10px] font-black uppercase tracking-[0.6em] btn-premium shadow-lg border border-indigo-400/50">
-                Commit Calibration
+              <button onClick={() => setShowSettings(false)} className="w-full py-4.5 bg-indigo-600 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-[0.6em] border border-indigo-400/50 shadow-2xl active:scale-95 transition-transform">
+                Apply Calibration
               </button>
             </div>
           </div>
