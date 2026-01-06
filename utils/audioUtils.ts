@@ -40,16 +40,17 @@ export async function decodeAudioData(
 /**
  * Splits text into semantic chunks for natural prosody.
  */
-export function chunkText(text: string, maxLength = 300): string[] {
-  const sentences = text.split(/(?<=[.?!])\s+/);
+export function chunkText(text: string, maxLength = 250): string[] {
+  const sentences = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+(?:\s|$)/g) || [text];
   const chunks: string[] = [];
   let current = "";
+
   for (const s of sentences) {
-    if ((current + " " + s).length > maxLength) {
-      if (current) chunks.push(current.trim());
+    if ((current + s).length > maxLength && current) {
+      chunks.push(current.trim());
       current = s;
     } else {
-      current += (current ? " " : "") + s;
+      current += s;
     }
   }
   if (current) chunks.push(current.trim());
@@ -57,15 +58,10 @@ export function chunkText(text: string, maxLength = 300): string[] {
 }
 
 /**
- * Injects prosody instructions into text chunks for the synthesis engine.
+ * Injects detailed prosody markup for the synthesis engine to interpret.
  */
-export function injectProsody(chunk: string, profile: { tone: string, pacing: string }): string {
-  const toneMap: Record<string, string> = {
-    friendly: "warm",
-    formal: "professional",
-    authoritative: "dominant"
-  };
-  return `[Tone: ${toneMap[profile.tone] || 'neutral'}, Pacing: ${profile.pacing}] ${chunk}`;
+export function injectProsody(chunk: string, preset: any): string {
+  return `<prosody pitch="${preset.pitch}" rate="${preset.rate}" timbre="${preset.timbre}" emphasis="${preset.emphasis}" emotion="${preset.emotion}">${chunk}</prosody>`;
 }
 
 export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

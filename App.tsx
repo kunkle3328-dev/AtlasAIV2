@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { 
@@ -8,9 +7,11 @@ import {
   AudioChunk, 
   Message 
 } from './types';
-import { Icons, GEMINI_MODEL, VoicePresets } from './constants';
-import { chunkText, sleep, injectProsody } from './utils/audioUtils';
+import { Icons, GEMINI_MODEL } from './constants';
+import { chunkText } from './utils/audioUtils';
 import { audioEngine } from './services/audioEngine';
+import { VoicePresets } from './constants/voicePresets';
+import { VoiceControls } from './components/VoiceControls';
 
 /**
  * Premium Technical Tooltip
@@ -63,6 +64,7 @@ const App: React.FC = () => {
   });
   const [audioChunks, setAudioChunks] = useState<AudioChunk[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [currentEmotion, setCurrentEmotion] = useState('neutral');
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -72,9 +74,19 @@ const App: React.FC = () => {
     }
   }, [messages, audioChunks, isThinking]);
 
+  // Sync user name persistence
   useEffect(() => {
     localStorage.setItem('atlas_username', userName);
+    audioEngine.setConfig(preset, brandProfile, userName);
   }, [userName]);
+
+  // Sync emotion tracking
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentEmotion(audioEngine.currentEmotion);
+    }, 200);
+    return () => clearInterval(interval);
+  }, []);
 
   const toggleHandsFree = async () => {
     if (isHandsFree) {
@@ -84,20 +96,18 @@ const App: React.FC = () => {
     } else {
       setIsHandsFree(true);
       setIsSpeaking(true);
-      audioEngine.setConfig(preset, brandProfile);
+      audioEngine.setConfig(preset, brandProfile, userName);
       try {
         await audioEngine.startLiveConversation(
           (text, role) => {
             setMessages(prev => {
               const lastMsg = prev[prev.length - 1];
-              // FIXED: Append tokens directly to avoid word-splitting spaces
               if (lastMsg && lastMsg.role === role && Date.now() - lastMsg.timestamp < 3000) {
                 const updated = [...prev];
-                // Direct join to preserve word continuity (e.g., "ena" + "bled" = "enabled")
                 const newContent = lastMsg.content + text;
                 updated[updated.length - 1] = { 
                   ...lastMsg, 
-                  content: newContent.replace(/\s{2,}/g, ' ') // Collapse accidental double spaces but keep words intact
+                  content: newContent.replace(/\s{2,}/g, ' ') 
                 };
                 return updated;
               }
@@ -134,8 +144,10 @@ const App: React.FC = () => {
     setAudioChunks([]);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-      const systemInstruction = `You are AtlasAI v2.1. Deliver elite concierge services. Respond with precision. User: ${userName || 'Client'}.`;
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const targetName = userName || 'Client';
+      const systemInstruction = `You are AtlasAI v2.1. Deliver elite concierge services. Respond with precision. 
+      USER IDENTITY: The client's name is ${targetName}. You MUST address them as ${targetName} directly in your response to maintain a high-end personal concierge feel. Never ignore the user's name.`;
       
       const response = await ai.models.generateContent({
         model: GEMINI_MODEL,
@@ -170,30 +182,33 @@ const App: React.FC = () => {
 
     setAudioChunks(initialChunks);
     setIsSpeaking(true);
-    audioEngine.setConfig(preset, brandProfile);
+    audioEngine.setConfig(preset, brandProfile, userName);
 
-    for (let i = 0; i < rawChunks.length; i++) {
-      setAudioChunks(prev => prev.map((c, idx) => idx === i ? { ...c, status: 'playing' } : c));
-      try {
-        const textToSpeak = injectProsody(rawChunks[i], brandProfile);
-        await audioEngine.speak(textToSpeak, (engine) => {
-          setActiveEngine(engine);
-          setAudioChunks(prev => prev.map((c, idx) => idx === i ? { ...c, engine } : c));
-        });
-        setAudioChunks(prev => prev.map((c, idx) => idx === i ? { ...c, status: 'completed' } : c));
-      } catch (err) {
-        setAudioChunks(prev => prev.map((c, idx) => idx === i ? { ...c, status: 'error' } : c));
+    // CENTRALIZED PIPELINE: Delegate the loop to audioEngine for background resilience
+    await audioEngine.speakText(
+      text,
+      (engine) => {
+        setActiveEngine(engine);
+      },
+      (index, status) => {
+        setAudioChunks(prev => prev.map((c, idx) => idx === index ? { ...c, status, engine: activeEngine } : c));
       }
-      await sleep(100); 
-    }
+    );
+
     setIsSpeaking(false);
   };
 
-  const handleStop = () => {
-    audioEngine.stopAll();
-    setIsSpeaking(false);
-    setIsHandsFree(false);
-    setAudioChunks([]);
+  const handlePresetChange = (newPreset: VoicePreset) => {
+    setPreset(newPreset);
+    audioEngine.setConfig(newPreset, brandProfile, userName);
+  };
+
+  const handleUserNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newName = e.target.value;
+    setUserName(newName);
+    // Persist and update engine immediately
+    localStorage.setItem('atlas_username', newName);
+    audioEngine.setConfig(preset, brandProfile, newName);
   };
 
   return (
@@ -237,6 +252,13 @@ const App: React.FC = () => {
           </TechnicalTooltip>
         </div>
       </header>
+
+      <VoiceControls 
+        onPresetChange={handlePresetChange} 
+        currentEmotion={currentEmotion} 
+        isSpeaking={isSpeaking}
+        selectedPreset={preset}
+      />
 
       <main className="flex-1 overflow-y-auto px-4 py-4 space-y-5 no-scrollbar relative z-10" ref={scrollRef}>
         {messages.length === 0 && !isHandsFree && (
@@ -343,7 +365,7 @@ const App: React.FC = () => {
                     <span className="text-indigo-500/40 text-[9px] cursor-help font-black">(?)</span>
                   </TechnicalTooltip>
                 </div>
-                <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="Node Access Name..."
+                <input type="text" value={userName} onChange={handleUserNameChange} placeholder="Node Access Name..."
                    className="w-full bg-[#050505]/60 border border-white/10 rounded-[0.8rem] py-3 px-4 text-white text-[11px] font-black outline-none focus:border-indigo-500/30 transition-all"
                 />
               </section>
@@ -356,17 +378,20 @@ const App: React.FC = () => {
                   </TechnicalTooltip>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
-                  {Object.values(VoicePreset).map((p, idx, arr) => (
-                    <TechnicalTooltip key={idx} title={p.toUpperCase()} text={VoicePresets[p as keyof typeof VoicePresets]}>
-                      <button onClick={() => setPreset(p)}
-                        className={`w-full px-2 py-2 rounded-[0.6rem] text-[8px] font-black border uppercase tracking-[0.1em] transition-all ${
-                          preset === p ? 'bg-indigo-600 border-indigo-400 text-white scale-105 z-10' : 'glass-dark border-white/10 text-zinc-600'
-                        } ${idx === arr.length - 1 ? 'col-span-2' : ''}`}
-                      >
-                        {p}
-                      </button>
-                    </TechnicalTooltip>
-                  ))}
+                  {Object.values(VoicePreset).map((p, idx, arr) => {
+                    const presetInfo = VoicePresets[p as keyof typeof VoicePresets];
+                    return (
+                      <TechnicalTooltip key={idx} title={p.toUpperCase()} text={presetInfo.description}>
+                        <button onClick={() => handlePresetChange(p)}
+                          className={`w-full px-2 py-2 rounded-[0.6rem] text-[8px] font-black border uppercase tracking-[0.1em] transition-all ${
+                            preset === p ? 'bg-indigo-600 border-indigo-400 text-white scale-105 z-10' : 'glass-dark border-white/10 text-zinc-600'
+                          } ${idx === arr.length - 1 ? 'col-span-2' : ''}`}
+                        >
+                          {p}
+                        </button>
+                      </TechnicalTooltip>
+                    );
+                  })}
                 </div>
               </section>
 
