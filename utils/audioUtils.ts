@@ -17,10 +17,6 @@ export function encode(bytes: Uint8Array) {
   return btoa(binary);
 }
 
-/**
- * Decodes raw PCM audio data into an AudioBuffer.
- * Updated with strict byte-offset handling to prevent desynchronization in raw binary streams.
- */
 export async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
@@ -44,9 +40,6 @@ export async function decodeAudioData(
   return audioBuffer;
 }
 
-/**
- * Splits text into semantic chunks for natural prosody.
- */
 export function chunkText(text: string, maxLength = 250): string[] {
   const sentences = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+(?:\s|$)/g) || [text];
   const chunks: string[] = [];
@@ -65,20 +58,29 @@ export function chunkText(text: string, maxLength = 250): string[] {
 }
 
 /**
- * Injects resolved Prosody Matrix values into a SSML-like markup.
- * Accepts the final resolved matrix authority.
+ * Injects advanced humanization metadata.
  */
 export function injectProsody(chunk: string, matrix: any): string {
-  // Precision normalization of values for synthesis interpretation
+  const adv = matrix.advanced || {};
+  const hLevel = adv.humanizationLevel || 0;
+  
+  // Calculate micro-deviations for realism
+  const microPitch = hLevel * (Math.random() * 0.06 - 0.03);
+  const microRate = hLevel * (Math.random() * 0.1 - 0.05);
+
   return `<prosody 
-    pitch="${matrix.pitch}" 
-    rate="${matrix.rate}" 
+    pitch="${(parseFloat(matrix.pitch) + microPitch).toFixed(3)}" 
+    rate="${(parseFloat(matrix.rate) + microRate).toFixed(3)}" 
     timbre="${matrix.timbre}" 
     emphasis="${matrix.emphasis}" 
-    variability="${matrix.variability || 0.2}"
+    variability="${(parseFloat(matrix.variability || 0.2) + (hLevel * 0.4)).toFixed(2)}"
+    prosodyVariance="${(parseFloat(matrix.prosodyVariance || 0.2) + (hLevel * 0.5)).toFixed(2)}"
+    vocalTension="${matrix.vocalTension || 0}"
     emotion="${matrix.emotion || 'neutral'}"
-    breathiness="${matrix.breathiness || 0}"
-    pause="${matrix.pause || 0}">
+    breathiness="${(parseFloat(matrix.breathiness || 0) + (hLevel * 0.1)).toFixed(2)}"
+    pause="${matrix.pause || 0}"
+    humanization="${hLevel.toFixed(2)}"
+    intent="${matrix.intent || 'neutral'}">
       ${chunk}
   </prosody>`;
 }

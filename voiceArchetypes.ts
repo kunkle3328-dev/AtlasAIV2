@@ -1,4 +1,17 @@
 export const VoiceArchetypes = {
+  concierge: {
+    pitch: 0,
+    rate: 1.0,
+    emphasis: 0.8,
+    pause: 350,
+    timbre: 0.05,
+    variability: 0.3,
+    breathiness: 0.06,
+    vocalTension: -0.05,
+    prosodyVariance: 0.3,
+    bargeInSensitivity: 0.6,
+    label: "Elite Concierge"
+  },
   narrator: {
     pitch: -0.1,
     rate: 0.92,
@@ -6,6 +19,10 @@ export const VoiceArchetypes = {
     pause: 420,
     timbre: 0.1,
     variability: 0.25,
+    breathiness: 0.05,
+    vocalTension: -0.1,
+    prosodyVariance: 0.2,
+    bargeInSensitivity: 0.4,
     label: "Professional Narrator"
   },
   educator: {
@@ -15,6 +32,10 @@ export const VoiceArchetypes = {
     pause: 480,
     timbre: 0,
     variability: 0.2,
+    breathiness: 0.02,
+    vocalTension: 0.1,
+    prosodyVariance: 0.15,
+    bargeInSensitivity: 0.3,
     label: "Academic Educator"
   },
   conversational: {
@@ -24,6 +45,10 @@ export const VoiceArchetypes = {
     pause: 280,
     timbre: 0.05,
     variability: 0.4,
+    breathiness: 0.08,
+    vocalTension: -0.05,
+    prosodyVariance: 0.45,
+    bargeInSensitivity: 0.7,
     label: "Natural Dialogue"
   },
   storyteller: {
@@ -33,6 +58,10 @@ export const VoiceArchetypes = {
     pause: 520,
     timbre: 0.15,
     variability: 0.6,
+    breathiness: 0.12,
+    vocalTension: 0.05,
+    prosodyVariance: 0.7,
+    bargeInSensitivity: 0.5,
     label: "Dynamic Storyteller"
   },
   executive: {
@@ -42,7 +71,63 @@ export const VoiceArchetypes = {
     pause: 600,
     timbre: -0.05,
     variability: 0.15,
+    breathiness: 0.03,
+    vocalTension: 0.2,
+    prosodyVariance: 0.1,
+    bargeInSensitivity: 0.2,
     label: "Executive Authority"
+  },
+  analyst: {
+    pitch: -0.05,
+    rate: 1.05,
+    emphasis: 0.6,
+    pause: 200,
+    timbre: -0.1,
+    variability: 0.1,
+    breathiness: 0.01,
+    vocalTension: 0.15,
+    prosodyVariance: 0.05,
+    bargeInSensitivity: 0.1,
+    label: "Technical Analyst"
+  },
+  companion: {
+    pitch: 0.1,
+    rate: 0.95,
+    emphasis: 0.8,
+    pause: 400,
+    timbre: 0.2,
+    variability: 0.5,
+    breathiness: 0.15,
+    vocalTension: -0.2,
+    prosodyVariance: 0.5,
+    bargeInSensitivity: 0.8,
+    label: "Personal Companion"
+  },
+  monk: {
+    pitch: -0.2,
+    rate: 0.75,
+    emphasis: 0.5,
+    pause: 800,
+    timbre: 0.1,
+    variability: 0.05,
+    breathiness: 0.2,
+    vocalTension: -0.3,
+    prosodyVariance: 0.1,
+    bargeInSensitivity: 0.05,
+    label: "Zen Meditation"
+  },
+  visionary: {
+    pitch: 0.2,
+    rate: 1.1,
+    emphasis: 1.2,
+    pause: 450,
+    timbre: 0.05,
+    variability: 0.7,
+    breathiness: 0.05,
+    vocalTension: 0.1,
+    prosodyVariance: 0.6,
+    bargeInSensitivity: 0.4,
+    label: "Inspirational Visionary"
   }
 };
 
